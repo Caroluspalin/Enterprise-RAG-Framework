@@ -1,6 +1,7 @@
 # --- Secrets ---
 .env
 *.env
+start.txt
 
 # --- Python virtual environment ---
 .venv/
@@ -20,8 +21,9 @@ __pycache__/
 chroma_db/
 
 # PDF documents may contain sensitive B2B data — never commit them.
-# Add a docs/.gitkeep if you want the empty folder tracked.
+# Covers both docs/ (CLI ingest) and src/docs/ (API upload when run from src/).
 docs/*.pdf
+src/docs/*.pdf
 
 # --- Logs ---
 logs/
@@ -32,6 +34,12 @@ logs/eval_*.txt
 # --- macOS ---
 .DS_Store
 .AppleDouble
+
+# --- Next.js frontend ---
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+frontend/.env*.local
 
 # --- IDE ---
 .vscode/

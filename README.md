@@ -2,11 +2,18 @@
 
 > **Ask your company documents anything — and get cited, grounded answers in seconds.**
 
-An enterprise-ready Retrieval-Augmented Generation (RAG) chatbot that turns your internal PDF library into a conversational knowledge base. Built with LangChain, ChromaDB, and OpenAI — runs entirely on your machine, no cloud infrastructure required.
+An enterprise-ready Retrieval-Augmented Generation (RAG) chatbot that turns your internal PDF library into a conversational knowledge base. Available as a **terminal chat** and a **streaming web UI**. Built with LangChain, ChromaDB, and OpenAI — runs entirely on your machine, no cloud infrastructure required.
 
 ---
 
 ## ✨ Key Features
+
+### 🌐 Web UI (New)
+- Modern dark-themed chat interface built with **Next.js 16 + Tailwind CSS**
+- **Streaming responses** — tokens appear word by word, just like ChatGPT
+- **Drag-and-drop PDF upload** directly from the browser — no CLI needed
+- **Source citation chips** shown beneath every answer (filename + page number)
+- Live document list in the sidebar, auto-refreshed after each upload
 
 ### 🧠 Smart Ingestion
 - Recursively scans a document folder and ingests all PDFs automatically
@@ -19,8 +26,8 @@ An enterprise-ready Retrieval-Augmented Generation (RAG) chatbot that turns your
 - Persistent storage survives restarts; re-ingest only what changed
 
 ### 💬 Conversational Memory
-- Follow-up questions work naturally — the chain reformulates them as standalone queries before hitting the retriever
-- Session memory resets cleanly with `/reset` without touching the vector store
+- Follow-up questions work naturally — chat history is passed as context on every request
+- Terminal mode: session memory resets cleanly with `/reset` without touching the vector store
 
 ### 🔌 Multi-Backend LLM Support
 Switch your LLM with a single environment variable — no code changes needed:
@@ -52,7 +59,6 @@ A dedicated `evaluate.py` script measures chatbot quality against a predefined t
 - Timestamped reports saved to `logs/eval_<timestamp>.txt` for tracking quality over time
 
 ```bash
-# Compare retrieval strategies side-by-side
 python src/evaluate.py --top-k 3
 python src/evaluate.py --top-k 8
 ```
@@ -83,27 +89,43 @@ OPENAI_API_KEY=sk-...
 LLM_BACKEND=openai        # or: anthropic / ollama
 ```
 
-### 3. Add your documents
+### 3. Add your documents & ingest
 
 ```bash
 cp your-company-docs/*.pdf docs/
-```
-
-### 4. Ingest
-
-```bash
 python src/ingest.py
-```
-
-### 5. Chat
-
-```bash
-python src/chat.py
 ```
 
 ---
 
-## 💬 Chat Commands
+## 🌐 Web UI
+
+Run the FastAPI backend and the Next.js frontend side by side:
+
+```bash
+# Terminal 1 — API backend (from the src/ directory)
+cd src
+uvicorn api:app --reload --port 8000
+
+# Terminal 2 — Next.js frontend
+cd frontend
+npm install
+npm run dev
+```
+
+Open **http://localhost:3000** in your browser.
+
+- Drag a PDF onto the sidebar upload area → it is ingested automatically
+- Type a question and hit Enter → the answer streams in token by token
+- Source citations appear below each answer
+
+---
+
+## 💬 Terminal Chat
+
+```bash
+python src/chat.py
+```
 
 | Command | Action |
 |---|---|
@@ -119,20 +141,60 @@ python src/chat.py
 
 ```
 b2b-rag-chatbot/
-├── docs/                   # Drop PDF files here
+├── docs/                   # Drop PDF files here (for CLI ingest)
 ├── logs/                   # Auto-created; rotating app.log + eval reports
 ├── chroma_db/              # Persisted vector store (auto-created on first ingest)
 ├── src/
+│   ├── api.py              # FastAPI backend — SSE streaming, upload, doc list
 │   ├── ingest.py           # PDF loader, chunker, embedder, deduplicator
 │   ├── retriever.py        # ChromaDB wrapper exposing a LangChain retriever
 │   ├── chain.py            # RAG chain: prompt + LLM + memory + logging
 │   ├── chat.py             # Interactive terminal UI
 │   ├── evaluate.py         # Automated evaluation suite
 │   └── logger.py           # Centralised rotating-file logger
+├── frontend/               # Next.js 16 web UI
+│   ├── app/                # App Router: layout, page, global styles
+│   ├── components/         # ChatWindow, MessageBubble, Sidebar, UploadPanel…
+│   ├── lib/api.ts          # Fetch wrappers for the FastAPI backend
+│   └── types/index.ts      # Shared TypeScript types
 ├── eval_questions.json     # Test cases for evaluate.py
 ├── .env.example            # All configurable parameters with defaults
-├── requirements.txt
+├── requirements.txt        # Python dependencies
 └── CLAUDE.md               # Project context and build roadmap
+```
+
+---
+
+## 🏛️ Architecture
+
+```
+PDFs (drag-and-drop or CLI)
+     │
+     ▼
+[ ingest.py / api.py ]
+  SHA-256 dedup → PyPDFLoader → RecursiveCharacterTextSplitter
+     │
+     ▼
+  OpenAI text-embedding-3-small
+     │
+     ▼
+  ChromaDB  (persisted to chroma_db/)
+     │
+     ▼
+[ api.py ]  ←  HTTP POST /api/chat  ←  [ Next.js frontend ]
+[ chat.py ] ←  terminal input
+     │
+     ▼
+[ retriever.py ]  →  top-k semantically similar chunks
+     │
+     ▼
+  LCEL chain: system prompt + context + conversation history
+     │
+     ▼
+  LLM  (OpenAI / Anthropic / Ollama)
+     │
+     ▼
+  Streaming answer + source citations
 ```
 
 ---
@@ -150,43 +212,10 @@ All settings live in `.env`:
 | `CHROMA_PATH` | `./chroma_db` | ChromaDB persistence directory |
 | `COLLECTION_NAME` | `b2b_docs` | ChromaDB collection name |
 | `CHUNK_SIZE` | `1000` | Characters per chunk |
-| `CHUNK_OVERLAP` | `200` | Overlap between consecutive chunks |
+| `CHUNK_OVERLAP` | `200` | Overlap between chunks |
 | `TOP_K` | `5` | Chunks retrieved per query |
 | `LOG_DIR` | `./logs` | Log file output directory |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING` |
-
----
-
-## 🏛️ Architecture
-
-```
-PDFs in docs/
-     │
-     ▼
-[ ingest.py ]
-  SHA-256 dedup → PyPDFLoader → RecursiveCharacterTextSplitter
-     │
-     ▼
-  OpenAI text-embedding-3-small
-     │
-     ▼
-  ChromaDB  (persisted to chroma_db/)
-     │
-     ▼
-[ chat.py ]  ←  user question
-     │
-     ▼
-[ retriever.py ]  →  top-k semantically similar chunks
-     │
-     ▼
-[ chain.py ]  →  system prompt + context + conversation history
-     │
-     ▼
-  LLM (OpenAI / Anthropic / Ollama)
-     │
-     ▼
-  Answer + source citations printed to terminal
-```
 
 ---
 
@@ -195,12 +224,26 @@ PDFs in docs/
 | Layer | Technology |
 |---|---|
 | Orchestration | LangChain 0.3 |
-| Vector store | ChromaDB 1.5 (local) |
+| Vector store | ChromaDB 1.5 (local, persistent) |
 | Embeddings | OpenAI `text-embedding-3-small` |
 | LLM | GPT-4o / Claude Sonnet / Llama 3 |
 | PDF parsing | PyPDF |
+| API backend | FastAPI + Uvicorn (SSE streaming) |
+| Web frontend | Next.js 16, React 19, Tailwind CSS |
 | Terminal UI | Rich |
 | Logging | Python `logging` + `RotatingFileHandler` |
+
+---
+
+## 💡 Selling to B2B Customers
+
+This stack is a solid foundation for a commercial product:
+
+- **Data stays on-prem** — ChromaDB is local, no SaaS dependency
+- **Any LLM backend** — swap OpenAI for a private Anthropic or Ollama deployment
+- **Multi-document** — load an entire document library; the retriever handles relevance automatically
+- **Audit trail** — every query and source citation is logged
+- **Extensible** — add auth, multi-tenancy, or a cloud vector DB without touching core logic
 
 ---
 

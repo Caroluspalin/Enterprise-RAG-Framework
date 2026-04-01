@@ -1,6 +1,6 @@
 # B2B RAG Chatbot
 
-A terminal-based Retrieval-Augmented Generation (RAG) chatbot that ingests PDF documents and answers questions about them using LangChain and ChromaDB.
+A Retrieval-Augmented Generation (RAG) chatbot that ingests PDF documents and answers questions about them using LangChain and ChromaDB. Available as a terminal chat and a web UI (Next.js + FastAPI).
 
 ---
 
@@ -20,7 +20,13 @@ b2b-rag-chatbot/
 │   ├── ingest.py           # Loads, chunks, and embeds PDFs into ChromaDB
 │   ├── retriever.py        # Wraps ChromaDB with a LangChain retriever
 │   ├── chain.py            # Builds the RAG chain (retriever + LLM + prompt)
-│   └── chat.py             # Terminal chat loop (entry point)
+│   ├── chat.py             # Terminal chat loop (entry point)
+│   └── api.py              # FastAPI backend (SSE streaming, upload, doc list)
+├── frontend/               # Next.js 15 web UI
+│   ├── app/                # App Router pages and layout
+│   ├── components/         # ChatWindow, MessageBubble, Sidebar, UploadPanel…
+│   ├── lib/api.ts          # Fetch wrappers for the FastAPI backend
+│   └── types/index.ts      # Shared TypeScript types
 ├── .env                    # API keys and config (not committed)
 ├── .env.example            # Template for required environment variables
 ├── requirements.txt
@@ -148,6 +154,16 @@ TOP_K=5                        # Number of chunks retrieved per query
 - [x] Add logging to file for debugging ingestion and retrieval
 - [x] Evaluate retrieval quality with a small test question set
 - [ ] Tune `CHUNK_SIZE`, `CHUNK_OVERLAP`, and `TOP_K` based on evaluation
+
+### Phase 7 — Web UI (Next.js + FastAPI)
+- [x] FastAPI backend (`src/api.py`) with SSE streaming, PDF upload, document list endpoints
+- [x] Next.js 15 frontend scaffold (App Router, Tailwind CSS, TypeScript)
+- [x] Chat UI: streaming message bubbles, blinking cursor, auto-scroll
+- [x] PDF upload panel with drag-and-drop in the sidebar
+- [x] Source citation chips displayed below each assistant message
+- [x] Document list in sidebar (live-refreshed after upload)
+- [ ] Markdown rendering in assistant messages (code blocks, bold, etc.)
+- [ ] Mobile-responsive layout
 
 ---
 

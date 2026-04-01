@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prevent the default white flash on load in dark mode. */
+html,
+body {
+  background-color: #020617; /* slate-950 */
+  color: #f1f5f9;            /* slate-100 */
+  height: 100%;
+}
+
+/* Custom scrollbar — subtle, on-brand dark style. */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #334155; /* slate-700 */
+  border-radius: 9999px;
+}
