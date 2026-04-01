@@ -1,0 +1,26 @@
+[
+  {
+    "id": "q1",
+    "question": "Kuka on TechCorpin toimitusjohtaja ja mikä on hänen puhelinnumeronsa?",
+    "expected_keywords": ["Matti", "Meikäläinen", "050 123 4567"],
+    "expected_source": "techcorp_ohjeet.pdf"
+  },
+  {
+    "id": "q2",
+    "question": "Mikä on tason 1 kriittisen vian vasteaika ja korjaustavoite?",
+    "expected_keywords": ["15 minuuttia", "2 tuntia"],
+    "expected_source": "techcorp_ohjeet.pdf"
+  },
+  {
+    "id": "q3",
+    "question": "Paljonko työntekijällä on laitebudjettia ja kuinka usein sen saa?",
+    "expected_keywords": ["1500", "kahden"],
+    "expected_source": "techcorp_ohjeet.pdf"
+  },
+  {
+    "id": "q4",
+    "question": "Mitä tarjoillaan pullaperjantaina ja missä?",
+    "expected_keywords": ["korvapuusteja", "vegaanisia", "ykköskerroksen"],
+    "expected_source": "techcorp_ohjeet.pdf"
+  }
+]

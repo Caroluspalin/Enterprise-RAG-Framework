@@ -1,0 +1,40 @@
+# --- Secrets ---
+.env
+*.env
+
+# --- Python virtual environment ---
+.venv/
+venv/
+env/
+
+# --- Python caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# --- Local data ---
+# Vector store can be large and is rebuilt with: python src/ingest.py
+chroma_db/
+
+# PDF documents may contain sensitive B2B data — never commit them.
+# Add a docs/.gitkeep if you want the empty folder tracked.
+docs/*.pdf
+
+# --- Logs ---
+logs/
+
+# --- Evaluation reports ---
+logs/eval_*.txt
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
