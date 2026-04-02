@@ -17,3 +17,20 @@ export interface Document {
   // null when the PDF has been removed from disk but embeddings still exist
   size_kb: number | null;
 }
+
+export interface ChatSession {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: string;
+}
+
+/** Message shape returned by the backend session history endpoint. */
+export interface PersistedMessage {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: Source[] | null;
+  created_at: string;
+}

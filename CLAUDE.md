@@ -164,15 +164,24 @@ TOP_K=5                        # Number of chunks retrieved per query
 - [x] PDF upload panel with drag-and-drop in the sidebar
 - [x] Source citation chips displayed below each assistant message
 - [x] Document list in sidebar (live-refreshed after upload)
-- [ ] Markdown rendering in assistant messages (code blocks, bold, etc.)
-- [ ] Mobile-responsive layout
+- [x] Markdown rendering in assistant messages (react-markdown + remark-gfm + rehype-highlight)
+- [x] Mobile-responsive layout (slide-over sidebar, hamburger menu, wider bubbles)
+
+### Phase 7b — Chat History & Analytics Foundation
+- [x] SQLite database module (`src/db.py`) with `sessions` and `messages` tables
+- [x] CRUD functions: create/get/list/delete sessions, add/get messages
+- [x] Auto-title sessions from first user question
+- [x] API endpoints: POST/GET/DELETE `/api/chat/sessions`, GET `/api/chat/sessions/{id}`
+- [x] Chat endpoint (`POST /api/chat`) auto-persists Q&A when `session_id` is provided
+- [x] Frontend: session management, history sidebar, load past conversations
+- [ ] Analytics dashboard (message counts, popular questions, usage over time)
 
 ### Phase 8 — Embeddable Chat Widget
 - [x] Standalone `/widget` route (full-screen chat, no sidebar, no auth)
 - [x] `embed-test.html` demo page with floating iframe toggle
 - [x] Disable Next.js dev indicator so it does not overlap widget input
-- [ ] Configurable widget theme (colors, title) via query params or postMessage API
-- [ ] Origin allowlist for iframe embedding (X-Frame-Options / CSP)
+- [x] Configurable widget theme (colors, title) via query params (?title=, ?accent=, ?bg=)
+- [x] Origin allowlist for iframe embedding (CSP frame-ancestors via middleware + WIDGET_ALLOWED_ORIGINS env)
 
 ---
 

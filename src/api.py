@@ -13,6 +13,10 @@ Endpoints:
   POST /api/upload                  — upload a PDF and trigger incremental ingestion
   GET  /api/documents               — list unique filenames stored in ChromaDB
   DELETE /api/documents/{filename}  — remove all embeddings for a file from ChromaDB
+  POST /api/chat/sessions           — create a new chat session
+  GET  /api/chat/sessions           — list sessions for a user
+  GET  /api/chat/sessions/{id}      — get messages for a session
+  DELETE /api/chat/sessions/{id}    — delete a session
 """
 
 import asyncio
@@ -29,10 +33,20 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
+from db import (
+    add_message,
+    auto_title_from_question,
+    create_session,
+    delete_session,
+    get_messages,
+    get_session,
+    get_sessions,
+    update_session_title,
+)
 from logger import get_logger
 from retriever import get_retriever
 
@@ -141,25 +155,62 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     history: list[ChatMessage] = []
+    session_id: str | None = Field(
+        default=None,
+        description="Optional session ID. When provided, the question and answer "
+        "are persisted to the database under this session.",
+    )
+    user_id: str = Field(
+        default="anonymous",
+        description="User identifier. Used when creating a new session on-the-fly.",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Streaming SSE generator
 # ---------------------------------------------------------------------------
 
-async def _stream_sse(question: str, history: list[ChatMessage]) -> AsyncIterator[str]:
+async def _stream_sse(
+    question: str,
+    history: list[ChatMessage],
+    session_id: str | None = None,
+    user_id: str = "anonymous",
+) -> AsyncIterator[str]:
     """Yield Server-Sent Event strings for each token, then sources, then done.
 
     Retrieval runs first (synchronously in a thread, because ChromaDB is sync).
     The retrieved context is then injected directly into the prompt so the LLM
     generation step can stream without waiting for a second async retrieval call.
+
+    When session_id is provided, the user question and the completed assistant
+    answer are persisted to the SQLite database.  If session_id is given but
+    does not exist yet, a new session is created automatically.
     """
     retriever, llm, prompt = _get_components()
 
-    # ChromaDB's client is synchronous — run it in a thread pool to avoid
-    # blocking the event loop.
-    source_docs = await asyncio.to_thread(retriever.invoke, question)
+    # -- Persist the user message and auto-create session if needed -----------
+    if session_id:
+        session = await asyncio.to_thread(get_session, session_id)
+        if not session:
+            await asyncio.to_thread(create_session, user_id, auto_title_from_question(question))
+            # create_session generates a random ID; we need to use the caller's ID.
+            # Re-create with the explicit ID by inserting directly.
+            # Simpler: let the caller create the session first. But to keep the
+            # API forgiving, we create it here with the supplied ID.
+            session = await asyncio.to_thread(
+                _ensure_session, session_id, user_id, question
+            )
 
+        await asyncio.to_thread(add_message, session_id, "user", question)
+
+        # Auto-title: if this is the first question in the session, derive
+        # a title from the question text.
+        if session and session["title"] == "New chat":
+            title = auto_title_from_question(question)
+            await asyncio.to_thread(update_session_title, session_id, title)
+
+    # -- Retrieval -----------------------------------------------------------
+    source_docs = await asyncio.to_thread(retriever.invoke, question)
     context = "\n\n".join(doc.page_content for doc in source_docs)
 
     # Convert the client-supplied history to LangChain message objects.
@@ -170,17 +221,20 @@ async def _stream_sse(question: str, history: list[ChatMessage]) -> AsyncIterato
         else:
             lc_history.append(AIMessage(content=msg.content))
 
-    # Stream the answer token by token.
+    # -- Stream the answer token by token ------------------------------------
     chain = prompt | llm | StrOutputParser()
+    full_answer: list[str] = []
+
     async for token in chain.astream({
         "context": context,
         "question": question,
         "chat_history": lc_history,
     }):
         if token:
+            full_answer.append(token)
             yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
 
-    # Deduplicate and send source citations after the answer is complete.
+    # -- Source citations ----------------------------------------------------
     seen: set[tuple] = set()
     sources = []
     for doc in source_docs:
@@ -192,7 +246,38 @@ async def _stream_sse(question: str, history: list[ChatMessage]) -> AsyncIterato
             sources.append({"filename": filename, "page": page})
 
     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+
+    # -- Persist the assistant message ---------------------------------------
+    if session_id:
+        await asyncio.to_thread(
+            add_message, session_id, "assistant", "".join(full_answer), sources or None
+        )
+
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+def _ensure_session(session_id: str, user_id: str, question: str) -> dict:
+    """Create a session row with an explicit ID (used when the caller provides one).
+
+    This is a workaround because create_session() generates its own UUID.
+    We insert directly so the frontend-supplied session_id is honoured.
+    """
+    import sqlite3 as _sqlite3
+    from datetime import datetime, timezone
+    from db import _connect
+
+    now = datetime.now(timezone.utc).isoformat()
+    title = auto_title_from_question(question)
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions (id, user_id, title, created_at) VALUES (?, ?, ?, ?)",
+                (session_id, user_id, title, now),
+            )
+    except _sqlite3.IntegrityError:
+        # Session already exists (race condition) — that's fine.
+        pass
+    return {"id": session_id, "user_id": user_id, "title": title, "created_at": now}
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +286,12 @@ async def _stream_sse(question: str, history: list[ChatMessage]) -> AsyncIterato
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
-    log.info("Chat | question=%r history_len=%d", req.question, len(req.history))
+    log.info(
+        "Chat | question=%r history_len=%d session_id=%s",
+        req.question, len(req.history), req.session_id,
+    )
     return StreamingResponse(
-        _stream_sse(req.question, req.history),
+        _stream_sse(req.question, req.history, req.session_id, req.user_id),
         media_type="text/event-stream",
         headers={
             # Prevent proxies and the browser from buffering the stream.
@@ -370,6 +458,51 @@ async def delete_document(filename: str):
         "message": f"'{filename}' deleted successfully.",
         "chunks_removed": chunks_deleted,
     }
+
+
+# ---------------------------------------------------------------------------
+# Chat session / history endpoints
+# ---------------------------------------------------------------------------
+
+class CreateSessionRequest(BaseModel):
+    user_id: str = "anonymous"
+    title: str = "New chat"
+
+
+@app.post("/api/chat/sessions")
+async def create_chat_session(req: CreateSessionRequest):
+    """Create a new chat session and return it."""
+    session = await asyncio.to_thread(create_session, req.user_id, req.title)
+    log.info("Session created | id=%s user=%s", session["id"], req.user_id)
+    return session
+
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(user_id: str = "anonymous"):
+    """Return all sessions for a user, most recent first."""
+    sessions = await asyncio.to_thread(get_sessions, user_id)
+    return {"sessions": sessions}
+
+
+@app.get("/api/chat/sessions/{session_id}")
+async def get_chat_session(session_id: str):
+    """Return a session's metadata and all its messages."""
+    session = await asyncio.to_thread(get_session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    messages = await asyncio.to_thread(get_messages, session_id)
+    return {"session": session, "messages": messages}
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def delete_chat_session(session_id: str):
+    """Delete a session and all its messages."""
+    session = await asyncio.to_thread(get_session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    await asyncio.to_thread(delete_session, session_id)
+    log.info("Session deleted | id=%s", session_id)
+    return {"message": "Session deleted."}
 
 
 @app.get("/api/health")

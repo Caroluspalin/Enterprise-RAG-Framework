@@ -5,9 +5,11 @@ import { FormEvent, KeyboardEvent, useRef, useState } from "react";
 interface ChatInputProps {
   onSend: (question: string) => void;
   disabled: boolean;
+  /** Optional hex color override for the send button (used by the widget). */
+  accentColor?: string;
 }
 
-export default function ChatInput({ onSend, disabled }: ChatInputProps) {
+export default function ChatInput({ onSend, disabled, accentColor }: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -60,6 +62,7 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
         type="submit"
         disabled={disabled || !value.trim()}
         className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+        style={accentColor ? { backgroundColor: accentColor } : undefined}
         aria-label="Send"
       >
         {disabled ? (

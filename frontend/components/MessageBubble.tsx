@@ -1,3 +1,6 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import type { Message } from "@/types";
 import SourceCitations from "@/components/SourceCitations";
 
@@ -10,7 +13,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[75%] ${isUser ? "order-2" : "order-1"}`}>
+      <div className={`max-w-[90%] md:max-w-[75%] ${isUser ? "order-2" : "order-1"}`}>
         {/* Avatar label */}
         <p className={`mb-1 text-xs text-slate-500 ${isUser ? "text-right" : "text-left"}`}>
           {isUser ? "You" : "Assistant"}
@@ -24,13 +27,22 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
               : "rounded-tl-sm bg-slate-800 text-slate-100"
           }`}
         >
-          {/* Preserve line breaks from the LLM response */}
-          {message.content.split("\n").map((line, i) => (
-            <span key={i}>
-              {line}
-              {i < message.content.split("\n").length - 1 && <br />}
-            </span>
-          ))}
+          {isUser ? (
+            // User messages are plain text — preserve line breaks.
+            message.content.split("\n").map((line, i) => (
+              <span key={i}>
+                {line}
+                {i < message.content.split("\n").length - 1 && <br />}
+              </span>
+            ))
+          ) : (
+            // Assistant messages rendered as markdown (code blocks, bold, lists, tables).
+            <div className="prose-invert prose-sm prose max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-slate-900 prose-pre:text-slate-200 prose-code:before:content-none prose-code:after:content-none prose-headings:text-slate-100 prose-a:text-blue-400 prose-strong:text-slate-100 prose-li:my-0.5">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          )}
 
           {/* Blinking cursor while streaming */}
           {message.isStreaming && (

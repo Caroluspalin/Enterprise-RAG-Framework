@@ -2,7 +2,7 @@
 
 > Ask your company documents anything — and get cited, grounded answers in seconds.
 
-A production-ready Retrieval-Augmented Generation (RAG) chatbot that turns an internal PDF library into a conversational knowledge base. Ships with a streaming web UI, role-based authentication, an admin panel for document management, and a terminal chat interface. Built with LangChain, ChromaDB, FastAPI, and Next.js — runs entirely on your own infrastructure.
+A production-ready Retrieval-Augmented Generation (RAG) chatbot that turns an internal PDF library into a conversational knowledge base. Ships with a streaming web UI, chat history, role-based authentication, an admin panel for document management, an embeddable widget, and a terminal chat interface. Built with LangChain, ChromaDB, FastAPI, and Next.js — runs entirely on your own infrastructure.
 
 ---
 
@@ -11,8 +11,18 @@ A production-ready Retrieval-Augmented Generation (RAG) chatbot that turns an in
 ### Web UI
 - Dark-themed chat interface built with **Next.js 15 + Tailwind CSS**
 - **Streaming responses** via Server-Sent Events — tokens appear word by word
+- **Markdown rendering** in assistant messages — code blocks with syntax highlighting, bold, lists, tables (react-markdown + remark-gfm + rehype-highlight)
 - **Source citation chips** beneath every answer (filename + page number)
+- **Mobile-responsive layout** — slide-over sidebar with hamburger menu on small screens
 - Live document list in the sidebar, reflecting what is actually in the vector store
+
+### Chat History
+- Conversations are automatically persisted to a **lightweight SQLite database**
+- **Session list** in the sidebar — click any past conversation to reload it
+- Sessions are **auto-titled** from the first user question
+- **"New chat"** button starts a fresh conversation
+- **Delete sessions** with a trash icon on hover
+- History is tied to the authenticated user (via NextAuth email)
 
 ### Authentication & Access Control
 - **Role-based login** powered by Auth.js (next-auth v5)
@@ -27,7 +37,9 @@ A production-ready Retrieval-Augmented Generation (RAG) chatbot that turns an in
 ### Embeddable Chat Widget
 - Standalone `/widget` route — a full-screen chat UI with no sidebar and no authentication
 - Designed for **iframe embedding** on external websites (e.g. customer support bot on a client's site)
-- Includes a ready-made `embed-test.html` demo page with a floating toggle button in the bottom-right corner
+- **Configurable theme** via query parameters: `?title=`, `?accent=`, `?bg=`
+- **CSP frame-ancestors** controlled via `WIDGET_ALLOWED_ORIGINS` env var
+- Includes a ready-made `embed-test.html` demo page with a floating toggle button
 
 ### Smart Ingestion
 - Recursively scans a folder and ingests all PDFs automatically
@@ -138,7 +150,9 @@ python src/chat.py
 
 ## Embedding the Chat Widget
 
-The `/widget` route serves a lightweight, auth-free chat interface meant to live inside an `<iframe>` on any external site:
+The `/widget` route serves a lightweight, auth-free chat interface meant to live inside an `<iframe>` on any external site.
+
+### Basic embed
 
 ```html
 <iframe
@@ -148,7 +162,34 @@ The `/widget` route serves a lightweight, auth-free chat interface meant to live
 ></iframe>
 ```
 
-To try it locally, open **http://localhost:3000/embed-test.html** while the dev server is running — it simulates a customer website with a floating chat button.
+### Themed embed
+
+Customise the widget appearance with query parameters:
+
+| Parameter | Description | Example |
+|---|---|---|
+| `title` | Header bar text | `?title=Support%20Bot` |
+| `accent` | Hex color for header and send button (no `#`) | `?accent=16a34a` |
+| `bg` | Hex color for background (no `#`) | `?bg=0f172a` |
+
+```html
+<iframe
+  src="https://your-domain.com/widget?title=Acme%20Support&accent=16a34a&bg=1e293b"
+  style="width: 380px; height: 520px; border: none; border-radius: 12px;"
+  title="Chat"
+></iframe>
+```
+
+### Restricting embedding origins
+
+By default, any origin can embed the widget. Set `WIDGET_ALLOWED_ORIGINS` in your environment to lock it down:
+
+```ini
+# Only allow these domains to embed the widget
+WIDGET_ALLOWED_ORIGINS=https://example.com https://app.example.com
+```
+
+To try it locally, open **http://localhost:3000/embed-test.html** while the dev server is running.
 
 ---
 
@@ -160,7 +201,8 @@ b2b-rag-chatbot/
 ├── logs/                      # Rotating app.log + evaluation reports (auto-created)
 ├── chroma_db/                 # Persisted vector store (auto-created on first ingest)
 ├── src/
-│   ├── api.py                 # FastAPI — SSE chat, PDF upload, document list & delete
+│   ├── api.py                 # FastAPI — SSE chat, PDF upload, documents, sessions
+│   ├── db.py                  # SQLite chat history — sessions & messages
 │   ├── ingest.py              # PDF loader, chunker, embedder, SHA-256 deduplicator
 │   ├── retriever.py           # ChromaDB wrapper exposing a LangChain retriever
 │   ├── chain.py               # RAG chain: prompt + LLM + conversation history
@@ -172,23 +214,23 @@ b2b-rag-chatbot/
 │   │   ├── admin/page.tsx     # Admin panel (server-side role guard)
 │   │   ├── api/auth/          # NextAuth route handler
 │   │   ├── login/page.tsx     # Login page
-│   │   ├── widget/page.tsx    # Embeddable chat widget (no auth, no sidebar)
+│   │   ├── widget/page.tsx    # Embeddable chat widget (no auth, themed via query params)
 │   │   ├── layout.tsx         # Root layout with SessionProvider
-│   │   └── page.tsx           # Chat UI
+│   │   └── page.tsx           # Main chat UI with session management
 │   ├── public/
 │   │   └── embed-test.html    # Demo page: simulated client site with iframe widget
 │   ├── components/
 │   │   ├── AdminPanel.tsx     # Document table with upload + delete
-│   │   ├── ChatWindow.tsx     # Streaming message list
-│   │   ├── ChatInput.tsx      # Question input bar
-│   │   ├── MessageBubble.tsx  # Individual message with source chips
-│   │   ├── Sidebar.tsx        # Document list, admin link, sign-out
+│   │   ├── ChatWindow.tsx     # Streaming message list with auto-scroll
+│   │   ├── ChatInput.tsx      # Question input bar (supports accent color override)
+│   │   ├── MessageBubble.tsx  # Message with markdown rendering + source chips
+│   │   ├── Sidebar.tsx        # Chat history list, document list, admin link
 │   │   ├── SignOutButton.tsx  # NextAuth sign-out
 │   │   └── UploadPanel.tsx    # Drag-and-drop PDF uploader
 │   ├── lib/api.ts             # Fetch wrappers for the FastAPI backend
 │   ├── types/index.ts         # Shared TypeScript types
 │   ├── auth.ts                # Auth.js config (Credentials provider, role callbacks)
-│   └── middleware.ts          # Route protection — redirects unauthenticated users
+│   └── middleware.ts          # Route protection + widget CSP headers
 ├── eval_questions.json        # Test cases for evaluate.py
 ├── .env.example               # All configurable backend parameters with defaults
 └── requirements.txt           # Python dependencies
@@ -221,11 +263,14 @@ PDFs (drag-and-drop in Admin Panel or CLI)
      ▼
   LCEL chain: system prompt + context + conversation history
      │
-     ▼
-  LLM  (OpenAI / Anthropic / Ollama)
-     │
-     ▼
-  Streaming answer + source citations  →  browser (SSE) or terminal
+     ▼                                ┌──────────────┐
+  LLM  (OpenAI / Anthropic / Ollama)  │  SQLite DB   │
+     │                                │  (sessions   │
+     ▼                                │   & messages) │
+  Streaming answer + source citations └──────┬───────┘
+     │                                       │
+     ▼                                       ▼
+  Browser (SSE) or terminal           Chat history persisted
 ```
 
 ---
@@ -234,7 +279,11 @@ PDFs (drag-and-drop in Admin Panel or CLI)
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/chat` | Streaming SSE chat |
+| `POST` | `/api/chat` | Streaming SSE chat (optionally persists to session) |
+| `POST` | `/api/chat/sessions` | Create a new chat session |
+| `GET` | `/api/chat/sessions?user_id=X` | List sessions for a user |
+| `GET` | `/api/chat/sessions/{id}` | Get session metadata and messages |
+| `DELETE` | `/api/chat/sessions/{id}` | Delete a session and its messages |
 | `POST` | `/api/upload` | Upload and ingest a PDF |
 | `GET` | `/api/documents` | List files in the vector store |
 | `DELETE` | `/api/documents/{filename}` | Remove a file's embeddings + file from disk |
@@ -258,6 +307,15 @@ All backend settings live in `.env`:
 | `CHUNK_OVERLAP` | `200` | Overlap between chunks |
 | `TOP_K` | `5` | Chunks retrieved per query |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING` |
+| `CHAT_DB_PATH` | `./chat_history.db` | SQLite database for chat history |
+| `WIDGET_ALLOWED_ORIGINS` | `*` | Origins allowed to embed `/widget` (space-separated) |
+
+Frontend settings live in `frontend/.env.local`:
+
+| Variable | Description |
+|---|---|
+| `AUTH_SECRET` | Auth.js session encryption key (min 32 chars) |
+| `NEXT_PUBLIC_API_URL` | FastAPI backend URL (default: `http://localhost:8000`) |
 
 ---
 
@@ -287,8 +345,10 @@ Reports are saved to `logs/eval_<timestamp>.txt`.
 | LLM | GPT-4o / Claude Sonnet / Llama 3 |
 | PDF parsing | PyPDF |
 | API backend | FastAPI + Uvicorn (SSE streaming) |
+| Chat persistence | SQLite (Python `sqlite3`) |
 | Authentication | Auth.js v5 (next-auth beta) |
 | Web frontend | Next.js 15, React 19, Tailwind CSS |
+| Markdown rendering | react-markdown, remark-gfm, rehype-highlight |
 | Terminal UI | Rich |
 | Logging | Python `logging` + `RotatingFileHandler` |
 

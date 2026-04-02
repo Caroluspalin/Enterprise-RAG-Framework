@@ -16,11 +16,13 @@ const nextConfig: NextConfig = {
     const backend =
       process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     return [
-      { source: "/api/chat",                destination: `${backend}/api/chat` },
-      { source: "/api/upload",              destination: `${backend}/api/upload` },
-      { source: "/api/documents",           destination: `${backend}/api/documents` },
-      { source: "/api/documents/:filename", destination: `${backend}/api/documents/:filename` },
-      { source: "/api/health",              destination: `${backend}/api/health` },
+      { source: "/api/chat",                     destination: `${backend}/api/chat` },
+      { source: "/api/chat/sessions",             destination: `${backend}/api/chat/sessions` },
+      { source: "/api/chat/sessions/:id",         destination: `${backend}/api/chat/sessions/:id` },
+      { source: "/api/upload",                    destination: `${backend}/api/upload` },
+      { source: "/api/documents",                 destination: `${backend}/api/documents` },
+      { source: "/api/documents/:filename",       destination: `${backend}/api/documents/:filename` },
+      { source: "/api/health",                    destination: `${backend}/api/health` },
     ];
   },
 };

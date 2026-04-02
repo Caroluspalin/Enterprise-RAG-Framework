@@ -20,6 +20,9 @@ __pycache__/
 # Vector store can be large and is rebuilt with: python src/ingest.py
 chroma_db/
 
+# SQLite chat history database
+*.db
+
 # PDF documents may contain sensitive B2B data — never commit them.
 # Covers both docs/ (CLI ingest) and src/docs/ (API upload when run from src/).
 docs/*.pdf

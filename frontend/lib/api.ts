@@ -6,7 +6,7 @@
  * hardcoded origin is needed in the browser bundle.
  */
 
-import type { Source, Document } from "@/types";
+import type { Source, Document, ChatSession, PersistedMessage } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Chat — streaming SSE
@@ -32,12 +32,19 @@ export type SSEEvent =
  */
 export async function* streamChat(
   question: string,
-  history: ChatHistoryMessage[]
+  history: ChatHistoryMessage[],
+  sessionId?: string,
+  userId?: string,
 ): AsyncGenerator<SSEEvent> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, history }),
+    body: JSON.stringify({
+      question,
+      history,
+      session_id: sessionId ?? null,
+      user_id: userId ?? "anonymous",
+    }),
   });
 
   if (!res.ok) {
@@ -97,6 +104,52 @@ export async function deleteDocument(
     throw new Error(err.detail ?? "Delete failed");
   }
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Upload
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Chat sessions (history)
+// ---------------------------------------------------------------------------
+
+export async function createSession(
+  userId: string,
+  title?: string,
+): Promise<ChatSession> {
+  const res = await fetch("/api/chat/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, title: title ?? "New chat" }),
+  });
+  if (!res.ok) throw new Error("Failed to create session");
+  return res.json();
+}
+
+export async function getSessions(userId: string): Promise<ChatSession[]> {
+  const res = await fetch(
+    `/api/chat/sessions?user_id=${encodeURIComponent(userId)}`,
+  );
+  if (!res.ok) throw new Error("Failed to fetch sessions");
+  const data = await res.json();
+  return data.sessions as ChatSession[];
+}
+
+export async function getSessionMessages(
+  sessionId: string,
+): Promise<{ session: ChatSession; messages: PersistedMessage[] }> {
+  const res = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}`);
+  if (!res.ok) throw new Error("Failed to fetch session messages");
+  return res.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error("Failed to delete session");
 }
 
 // ---------------------------------------------------------------------------
