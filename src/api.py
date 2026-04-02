@@ -27,13 +27,16 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 load_dotenv()
 
@@ -54,6 +57,21 @@ log = get_logger("api")
 
 DOCS_PATH = Path(os.getenv("DOCS_PATH", "./docs"))
 
+# Widget API key — when set, POST /api/chat requires a matching X-Widget-Key header.
+# This protects the unauthenticated widget route from abuse.
+WIDGET_API_KEY = os.getenv("WIDGET_API_KEY", "")
+
+# CORS — read allowed origins from env, fall back to localhost for development.
+_allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS: list[str] = (
+    [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
+    if _allowed_origins_raw
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
+
+# Rate limiting — max requests per minute for the /api/chat endpoint.
+CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "5/minute")
+
 # Identical wording to chain.py so terminal and web give consistent answers.
 SYSTEM_PROMPT = """You are a helpful assistant for a B2B company. \
 Answer the user's question using ONLY the information provided in the context below. \
@@ -70,16 +88,29 @@ Context:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="B2B RAG API", version="1.0.0")
+# Rate limiter keyed by client IP address.
+limiter = Limiter(key_func=get_remote_address)
 
-# Allow the Next.js dev server and any localhost variant.
-# In production, restrict this to the actual frontend origin.
+app = FastAPI(title="B2B RAG API", version="1.0.0")
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Return a JSON 429 instead of slowapi's default plain-text response."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again later."},
+    )
+
+
+# CORS — origins are read from the ALLOWED_ORIGINS env var (comma-separated).
+# In development the default includes localhost:3000.
+log.info("CORS allowed origins: %s", ALLOWED_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -285,7 +316,16 @@ def _ensure_session(session_id: str, user_id: str, question: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+@limiter.limit(CHAT_RATE_LIMIT)
+async def chat(request: Request, req: ChatRequest):
+    # When WIDGET_API_KEY is configured, every chat request must include
+    # a matching X-Widget-Key header. This prevents unauthenticated abuse
+    # of the LLM (especially from the public /widget embed route).
+    if WIDGET_API_KEY:
+        client_key = request.headers.get("X-Widget-Key", "")
+        if client_key != WIDGET_API_KEY:
+            raise HTTPException(status_code=403, detail="Invalid or missing widget API key.")
+
     log.info(
         "Chat | question=%r history_len=%d session_id=%s",
         req.question, len(req.history), req.session_id,

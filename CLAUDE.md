@@ -113,6 +113,9 @@ CHROMA_PATH=./chroma_db        # Where ChromaDB persists data
 CHUNK_SIZE=1000                # Characters per chunk
 CHUNK_OVERLAP=200              # Overlap between chunks
 TOP_K=5                        # Number of chunks retrieved per query
+ALLOWED_ORIGINS=https://myapp.vercel.app  # Comma-separated CORS origins
+WIDGET_API_KEY=                # Secret for X-Widget-Key header (generate with secrets.token_urlsafe)
+CHAT_RATE_LIMIT=5/minute       # Rate limit for /api/chat per IP
 ```
 
 ---

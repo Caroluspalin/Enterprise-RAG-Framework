@@ -36,9 +36,19 @@ export async function* streamChat(
   sessionId?: string,
   userId?: string,
 ): AsyncGenerator<SSEEvent> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  // Include the widget API key when configured so the backend allows the request.
+  const widgetKey = process.env.NEXT_PUBLIC_WIDGET_API_KEY;
+  if (widgetKey) {
+    headers["X-Widget-Key"] = widgetKey;
+  }
+
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       question,
       history,
