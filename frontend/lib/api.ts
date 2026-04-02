@@ -86,6 +86,19 @@ export async function listDocuments(): Promise<Document[]> {
   return data.documents as Document[];
 }
 
+export async function deleteDocument(
+  filename: string
+): Promise<{ message: string; chunks_removed: number }> {
+  const res = await fetch(`/api/documents/${encodeURIComponent(filename)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Delete failed" }));
+    throw new Error(err.detail ?? "Delete failed");
+  }
+  return res.json();
+}
+
 // ---------------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------------

@@ -9,9 +9,10 @@ ConversationalRetrievalChain because LCEL's .astream() natively yields tokens,
 while the older chain class requires callback hacks to achieve the same effect.
 
 Endpoints:
-  POST /api/chat       — streaming chat via Server-Sent Events
-  POST /api/upload     — upload a PDF and trigger incremental ingestion
-  GET  /api/documents  — list PDFs currently in DOCS_PATH
+  POST /api/chat                    — streaming chat via Server-Sent Events
+  POST /api/upload                  — upload a PDF and trigger incremental ingestion
+  GET  /api/documents               — list unique filenames stored in ChromaDB
+  DELETE /api/documents/{filename}  — remove all embeddings for a file from ChromaDB
 """
 
 import asyncio
@@ -283,18 +284,92 @@ def _ingest_pdf(pdf_path: Path) -> None:
 
 @app.get("/api/documents")
 async def list_documents():
-    """Return the list of PDFs currently available in DOCS_PATH."""
-    if not DOCS_PATH.exists():
-        return {"documents": []}
+    """Return unique filenames currently embedded in ChromaDB.
 
-    pdfs = [
-        {
-            "name": p.name,
-            "size_kb": round(p.stat().st_size / 1024, 1),
-        }
-        for p in sorted(DOCS_PATH.rglob("*.pdf"))
-    ]
-    return {"documents": pdfs}
+    Reading from the vector store (not just DOCS_PATH) ensures the list
+    accurately reflects what the RAG pipeline can actually retrieve from.
+    """
+    from ingest import CHROMA_PATH, COLLECTION_NAME
+    from chromadb import PersistentClient
+
+    def _query_chroma():
+        client = PersistentClient(path=str(CHROMA_PATH))
+        try:
+            collection = client.get_collection(COLLECTION_NAME)
+        except Exception:
+            # Collection does not exist yet — no documents ingested.
+            return []
+
+        results = collection.get(include=["metadatas"])
+        # Collect unique filenames, preserving insertion order via dict.
+        seen: dict[str, bool] = {}
+        for meta in results["metadatas"]:
+            name = meta.get("source_file")
+            if name:
+                seen[name] = True
+
+        documents = []
+        for name in seen:
+            disk_path = DOCS_PATH / name
+            size_kb = round(disk_path.stat().st_size / 1024, 1) if disk_path.exists() else None
+            documents.append({"name": name, "size_kb": size_kb})
+
+        return documents
+
+    documents = await asyncio.to_thread(_query_chroma)
+    return {"documents": documents}
+
+
+@app.delete("/api/documents/{filename}")
+async def delete_document(filename: str):
+    """Remove all ChromaDB embeddings for filename and delete the PDF from disk.
+
+    Steps:
+      1. Find all chunk IDs in ChromaDB where source_file == filename.
+      2. Delete those chunks from the collection.
+      3. Delete the physical PDF file from DOCS_PATH (if it exists).
+      4. Invalidate the retriever cache so the next chat request does not
+         serve stale results from the now-deleted document.
+    """
+    from ingest import CHROMA_PATH, COLLECTION_NAME
+    from chromadb import PersistentClient
+
+    def _delete_from_chroma():
+        client = PersistentClient(path=str(CHROMA_PATH))
+        try:
+            collection = client.get_collection(COLLECTION_NAME)
+        except Exception:
+            raise HTTPException(status_code=404, detail="No documents have been ingested yet.")
+
+        # ChromaDB's where filter uses exact-match on metadata fields.
+        results = collection.get(where={"source_file": filename}, include=["metadatas"])
+        ids_to_delete = results["ids"]
+
+        if not ids_to_delete:
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{filename}' was not found in the vector store.",
+            )
+
+        collection.delete(ids=ids_to_delete)
+        log.info("Deleted %d chunks for '%s' from ChromaDB", len(ids_to_delete), filename)
+        return len(ids_to_delete)
+
+    chunks_deleted = await asyncio.to_thread(_delete_from_chroma)
+
+    # Also remove the physical file so it cannot be re-ingested accidentally.
+    disk_path = DOCS_PATH / filename
+    if disk_path.exists():
+        disk_path.unlink()
+        log.info("Deleted file from disk: %s", disk_path)
+
+    # Drop cached retriever so the next request rebuilds it without this file.
+    _invalidate_components()
+
+    return {
+        "message": f"'{filename}' deleted successfully.",
+        "chunks_removed": chunks_deleted,
+    }
 
 
 @app.get("/api/health")

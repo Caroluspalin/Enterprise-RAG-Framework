@@ -14,5 +14,6 @@ export interface Message {
 
 export interface Document {
   name: string;
-  size_kb: number;
+  // null when the PDF has been removed from disk but embeddings still exist
+  size_kb: number | null;
 }
