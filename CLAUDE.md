@@ -24,7 +24,9 @@ b2b-rag-chatbot/
 │   └── api.py              # FastAPI backend (SSE streaming, upload, doc list)
 ├── frontend/               # Next.js 15 web UI
 │   ├── app/                # App Router pages and layout
+│   │   └── widget/         # Embeddable chat widget (no sidebar, no auth)
 │   ├── components/         # ChatWindow, MessageBubble, Sidebar, UploadPanel…
+│   ├── public/embed-test.html  # Demo page showing the widget in an iframe
 │   ├── lib/api.ts          # Fetch wrappers for the FastAPI backend
 │   └── types/index.ts      # Shared TypeScript types
 ├── .env                    # API keys and config (not committed)
@@ -164,6 +166,13 @@ TOP_K=5                        # Number of chunks retrieved per query
 - [x] Document list in sidebar (live-refreshed after upload)
 - [ ] Markdown rendering in assistant messages (code blocks, bold, etc.)
 - [ ] Mobile-responsive layout
+
+### Phase 8 — Embeddable Chat Widget
+- [x] Standalone `/widget` route (full-screen chat, no sidebar, no auth)
+- [x] `embed-test.html` demo page with floating iframe toggle
+- [x] Disable Next.js dev indicator so it does not overlap widget input
+- [ ] Configurable widget theme (colors, title) via query params or postMessage API
+- [ ] Origin allowlist for iframe embedding (X-Frame-Options / CSP)
 
 ---
 

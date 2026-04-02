@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // Disable the dev-mode indicator ("N" badge) so it does not overlap the
+  // chat input inside the embeddable widget iframe.
+  devIndicators: false,
   // Proxy only the RAG-specific routes to the FastAPI backend.
   // /api/auth/* is intentionally omitted — NextAuth handles those internally.
   // In production, configure your reverse proxy (nginx, etc.) instead.

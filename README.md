@@ -24,6 +24,11 @@ A production-ready Retrieval-Augmented Generation (RAG) chatbot that turns an in
 - Live document table showing every file currently embedded in the vector store
 - **Delete individual documents** — removes all embeddings from ChromaDB and the file from disk in one click
 
+### Embeddable Chat Widget
+- Standalone `/widget` route — a full-screen chat UI with no sidebar and no authentication
+- Designed for **iframe embedding** on external websites (e.g. customer support bot on a client's site)
+- Includes a ready-made `embed-test.html` demo page with a floating toggle button in the bottom-right corner
+
 ### Smart Ingestion
 - Recursively scans a folder and ingests all PDFs automatically
 - **SHA-256 deduplication** — unchanged files are never re-embedded, saving time and API costs
@@ -131,6 +136,22 @@ python src/chat.py
 
 ---
 
+## Embedding the Chat Widget
+
+The `/widget` route serves a lightweight, auth-free chat interface meant to live inside an `<iframe>` on any external site:
+
+```html
+<iframe
+  src="https://your-domain.com/widget"
+  style="width: 380px; height: 520px; border: none; border-radius: 12px;"
+  title="Chat"
+></iframe>
+```
+
+To try it locally, open **http://localhost:3000/embed-test.html** while the dev server is running — it simulates a customer website with a floating chat button.
+
+---
+
 ## Project Structure
 
 ```
@@ -151,8 +172,11 @@ b2b-rag-chatbot/
 │   │   ├── admin/page.tsx     # Admin panel (server-side role guard)
 │   │   ├── api/auth/          # NextAuth route handler
 │   │   ├── login/page.tsx     # Login page
+│   │   ├── widget/page.tsx    # Embeddable chat widget (no auth, no sidebar)
 │   │   ├── layout.tsx         # Root layout with SessionProvider
 │   │   └── page.tsx           # Chat UI
+│   ├── public/
+│   │   └── embed-test.html    # Demo page: simulated client site with iframe widget
 │   ├── components/
 │   │   ├── AdminPanel.tsx     # Document table with upload + delete
 │   │   ├── ChatWindow.tsx     # Streaming message list
