@@ -44,11 +44,15 @@ from db import (
     add_message,
     auto_title_from_question,
     create_session,
+    create_user,
     delete_session,
+    get_analytics,
     get_messages,
     get_session,
     get_sessions,
+    get_user_by_username,
     update_session_title,
+    verify_user,
 )
 from logger import get_logger
 from retriever import get_retriever
@@ -546,6 +550,58 @@ async def delete_chat_session(session_id: str):
     await asyncio.to_thread(delete_session, session_id)
     log.info("Session deleted | id=%s", session_id)
     return {"message": "Session deleted."}
+
+
+# ---------------------------------------------------------------------------
+# Authentication endpoints
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    name: str
+    role: str = "user"
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    """Verify credentials and return user info (without password hash).
+
+    The actual session/token management lives in NextAuth on the frontend;
+    this endpoint just validates username + bcrypt hash in SQLite.
+    """
+    user = await asyncio.to_thread(verify_user, req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    log.info("Login successful | user=%s role=%s", user["username"], user["role"])
+    return user
+
+
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    """Create a new user account with a bcrypt-hashed password."""
+    existing = await asyncio.to_thread(get_user_by_username, req.username)
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken.")
+    user = await asyncio.to_thread(create_user, req.username, req.password, req.name, req.role)
+    log.info("User registered | user=%s role=%s", user["username"], user["role"])
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Analytics endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/analytics")
+async def analytics(days: int = 30):
+    """Return aggregated chat analytics for the admin dashboard."""
+    data = await asyncio.to_thread(get_analytics, days)
+    return data
 
 
 @app.get("/api/health")

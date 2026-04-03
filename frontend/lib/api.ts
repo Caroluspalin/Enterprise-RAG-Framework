@@ -6,7 +6,7 @@
  * hardcoded origin is needed in the browser bundle.
  */
 
-import type { Source, Document, ChatSession, PersistedMessage } from "@/types";
+import type { Source, Document, ChatSession, PersistedMessage, AnalyticsData } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Chat — streaming SSE
@@ -160,6 +160,20 @@ export async function deleteSession(sessionId: string): Promise<void> {
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error("Failed to delete session");
+}
+
+// ---------------------------------------------------------------------------
+// Upload
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+export async function fetchAnalytics(days: number = 30): Promise<AnalyticsData> {
+  const res = await fetch(`/api/analytics?days=${days}`);
+  if (!res.ok) throw new Error("Failed to fetch analytics");
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------

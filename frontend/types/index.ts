@@ -34,3 +34,31 @@ export interface PersistedMessage {
   sources: Source[] | null;
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+export interface DayCount {
+  date: string;
+  count: number;
+}
+
+export interface RecentQuestion {
+  question: string;
+  created_at: string;
+}
+
+export interface PopularQuestion {
+  question: string;
+  count: number;
+}
+
+export interface AnalyticsData {
+  total_messages: number;
+  total_sessions: number;
+  active_sessions: number;
+  messages_per_day: DayCount[];
+  recent_questions: RecentQuestion[];
+  popular_questions: PopularQuestion[];
+}

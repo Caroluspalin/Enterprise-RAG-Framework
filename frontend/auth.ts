@@ -3,19 +3,15 @@
  *
  * Auth.js v5 (next-auth@beta) configuration.
  *
- * Uses a Credentials provider with two hard-coded demo users so the MVP can
- * be demoed immediately without a database. In production, replace the
- * DEMO_USERS lookup with a real DB query and hash passwords with bcrypt.
+ * The Credentials provider calls the FastAPI backend's /api/auth/login
+ * endpoint which verifies the password against a bcrypt hash stored in
+ * SQLite.  No passwords are stored or compared on the Next.js side.
  */
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
-// Hard-coded demo users — replace with a DB lookup in production.
-// Passwords are compared in plain text here; use bcrypt hashes in production.
-const DEMO_USERS = [
-  { id: "1", name: "User",  username: "user",  password: "user123",  role: "user"  },
-  { id: "2", name: "Admin", username: "admin", password: "admin123", role: "admin" },
-] as const;
+/** The FastAPI backend URL — used server-side only (not exposed to the browser). */
+const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -25,15 +21,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const user = DEMO_USERS.find(
-          (u) =>
-            u.username === credentials?.username &&
-            u.password === credentials?.password
-        );
-        // Returning null causes NextAuth to reject the credentials.
-        if (!user) return null;
-        // Only return fields we want stored in the token — never the password.
-        return { id: user.id, name: user.name, role: user.role };
+        if (!credentials?.username || !credentials?.password) return null;
+
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: credentials.username,
+              password: credentials.password,
+            }),
+          });
+
+          if (!res.ok) return null;
+
+          const user = await res.json();
+          // Return the shape NextAuth expects — id, name, and our custom role field.
+          return { id: user.id, name: user.name, role: user.role };
+        } catch {
+          // Backend unreachable — reject the login attempt.
+          return null;
+        }
       },
     }),
   ],

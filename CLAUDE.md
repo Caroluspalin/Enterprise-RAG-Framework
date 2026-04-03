@@ -77,6 +77,8 @@ PDFs in docs/
 | `chromadb` | Local persistent vector database |
 | `pypdf` | PDF text extraction |
 | `python-dotenv` | Load environment variables from `.env` |
+| `passlib[bcrypt]` | Secure password hashing with bcrypt |
+| `bcrypt` | Bcrypt backend for passlib |
 
 ### Optional
 
@@ -116,6 +118,7 @@ TOP_K=5                        # Number of chunks retrieved per query
 ALLOWED_ORIGINS=https://myapp.vercel.app  # Comma-separated CORS origins
 WIDGET_API_KEY=                # Secret for X-Widget-Key header (generate with secrets.token_urlsafe)
 CHAT_RATE_LIMIT=5/minute       # Rate limit for /api/chat per IP
+BACKEND_URL=http://localhost:8000  # FastAPI URL for NextAuth server-side credential verification
 ```
 
 ---
@@ -177,7 +180,7 @@ CHAT_RATE_LIMIT=5/minute       # Rate limit for /api/chat per IP
 - [x] API endpoints: POST/GET/DELETE `/api/chat/sessions`, GET `/api/chat/sessions/{id}`
 - [x] Chat endpoint (`POST /api/chat`) auto-persists Q&A when `session_id` is provided
 - [x] Frontend: session management, history sidebar, load past conversations
-- [ ] Analytics dashboard (message counts, popular questions, usage over time)
+- [x] Analytics dashboard (message counts, popular questions, usage over time)
 
 ### Phase 8 — Embeddable Chat Widget
 - [x] Standalone `/widget` route (full-screen chat, no sidebar, no auth)
@@ -185,6 +188,20 @@ CHAT_RATE_LIMIT=5/minute       # Rate limit for /api/chat per IP
 - [x] Disable Next.js dev indicator so it does not overlap widget input
 - [x] Configurable widget theme (colors, title) via query params (?title=, ?accent=, ?bg=)
 - [x] Origin allowlist for iframe embedding (CSP frame-ancestors via middleware + WIDGET_ALLOWED_ORIGINS env)
+
+### Phase 9 — User Management & Auth Hardening
+- [x] `users` table in SQLite with bcrypt password hashing (passlib)
+- [x] CRUD functions: create_user, verify_user, get_user_by_username, list_users
+- [x] Default admin seed on first run (`admin` / `admin123` — change immediately)
+- [x] `POST /api/auth/login` — verify credentials against hashed passwords
+- [x] `POST /api/auth/register` — create new users with bcrypt hashing
+- [x] `auth.ts` calls FastAPI backend instead of hardcoded demo users
+- [x] `BACKEND_URL` env var for server-side auth calls
+- [x] `GET /api/analytics` endpoint with message counts, per-day stats, popular & recent questions
+- [x] Admin panel analytics tab with stat cards, bar chart, question lists
+- [ ] Admin panel user management (list / create / delete users)
+- [ ] Password change endpoint and UI
+- [ ] JWT-based API authentication (replace widget key with proper tokens)
 
 ---
 
