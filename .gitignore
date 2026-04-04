@@ -1,51 +1,88 @@
-# --- Secrets ---
+# ============================================================
+# Secrets — NEVER commit these
+# ============================================================
 .env
+.env.*
 *.env
-start.txt
+!.env.example
 
-# --- Python virtual environment ---
+# ============================================================
+# SQLite databases — contain user data, passwords, chat history
+# ============================================================
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ============================================================
+# Python virtual environment
+# ============================================================
 .venv/
 venv/
 env/
 
-# --- Python caches ---
+# ============================================================
+# Python caches
+# ============================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyo
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
 
-# --- Local data ---
-# Vector store can be large and is rebuilt with: python src/ingest.py
+# ============================================================
+# Local data — rebuilt with: python src/ingest.py
+# ============================================================
 chroma_db/
 
-# SQLite chat history database
-*.db
-
 # PDF documents may contain sensitive B2B data — never commit them.
-# Covers both docs/ (CLI ingest) and src/docs/ (API upload when run from src/).
 docs/*.pdf
 src/docs/*.pdf
 
-# --- Logs ---
+# ============================================================
+# Logs
+# ============================================================
 logs/
+*.log
 
-# --- Evaluation reports ---
-logs/eval_*.txt
-
-# --- macOS ---
-.DS_Store
-.AppleDouble
-
-# --- Next.js frontend ---
+# ============================================================
+# Next.js frontend
+# ============================================================
 frontend/.next/
+frontend/out/
 frontend/node_modules/
 frontend/.env.local
 frontend/.env*.local
 
-# --- IDE ---
+# ============================================================
+# Node (root-level, in case of monorepo tools)
+# ============================================================
+node_modules/
+
+# ============================================================
+# macOS
+# ============================================================
+.DS_Store
+.AppleDouble
+Thumbs.db
+
+# ============================================================
+# IDE
+# ============================================================
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+
+# ============================================================
+# Misc
+# ============================================================
+start.txt

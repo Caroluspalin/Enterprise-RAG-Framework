@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import bcrypt as _bcrypt
 from dotenv import load_dotenv
-from passlib.hash import bcrypt
 
 load_dotenv()
 
@@ -199,7 +199,7 @@ def create_user(username: str, password: str, name: str, role: str = "user") -> 
     """Create a new user with a bcrypt-hashed password."""
     user_id = uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
-    password_hash = bcrypt.hash(password)
+    password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     with _connect() as conn:
         conn.execute(
             "INSERT INTO users (id, username, password_hash, name, role, created_at) "
@@ -223,7 +223,7 @@ def verify_user(username: str, password: str) -> dict | None:
     if not row:
         return None
     user = dict(row)
-    if not bcrypt.verify(password, user["password_hash"]):
+    if not _bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
         return None
     # Never return the hash to callers.
     del user["password_hash"]

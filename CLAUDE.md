@@ -77,8 +77,7 @@ PDFs in docs/
 | `chromadb` | Local persistent vector database |
 | `pypdf` | PDF text extraction |
 | `python-dotenv` | Load environment variables from `.env` |
-| `passlib[bcrypt]` | Secure password hashing with bcrypt |
-| `bcrypt` | Bcrypt backend for passlib |
+| `bcrypt` | Secure password hashing (bcrypt algorithm) |
 
 ### Optional
 
