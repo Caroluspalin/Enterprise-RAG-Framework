@@ -21,3 +21,12 @@ body {
   background-color: #334155; /* slate-700 */
   border-radius: 9999px;
 }
+
+/* Toast slide-in animation */
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
+}

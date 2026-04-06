@@ -43,15 +43,23 @@ load_dotenv()
 from db import (
     add_message,
     auto_title_from_question,
+    change_password,
+    create_api_key,
     create_session,
     create_user,
+    delete_api_key,
     delete_session,
+    delete_user,
     get_analytics,
     get_messages,
     get_session,
     get_sessions,
     get_user_by_username,
+    list_api_keys,
+    list_users,
+    revoke_api_key,
     update_session_title,
+    verify_api_key,
     verify_user,
 )
 from logger import get_logger
@@ -61,9 +69,11 @@ log = get_logger("api")
 
 DOCS_PATH = Path(os.getenv("DOCS_PATH", "./docs"))
 
-# Widget API key — when set, POST /api/chat requires a matching X-Widget-Key header.
-# This protects the unauthenticated widget route from abuse.
-WIDGET_API_KEY = os.getenv("WIDGET_API_KEY", "")
+# Widget API key — POST /api/chat requires a valid X-Widget-Key header.
+# Keys are verified against SHA-256 hashes stored in the api_keys table.
+# The legacy WIDGET_API_KEY env var is still supported as a fallback so
+# existing deployments keep working until keys are migrated to the DB.
+WIDGET_API_KEY_LEGACY = os.getenv("WIDGET_API_KEY", "")
 
 # CORS — read allowed origins from env, fall back to localhost for development.
 _allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "")
@@ -75,6 +85,11 @@ ALLOWED_ORIGINS: list[str] = (
 
 # Rate limiting — max requests per minute for the /api/chat endpoint.
 CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "5/minute")
+
+# Server-to-server secret for admin endpoints.  Next.js sends this in the
+# Authorization header when calling /api/admin/* routes.  Without it, no
+# one can access admin functionality even if they hit the backend directly.
+INTERNAL_ADMIN_SECRET = os.getenv("INTERNAL_ADMIN_SECRET", "")
 
 # Identical wording to chain.py so terminal and web give consistent answers.
 SYSTEM_PROMPT = """You are a professional, helpful, and polite customer service assistant for our company.
@@ -327,13 +342,17 @@ def _ensure_session(session_id: str, user_id: str, question: str) -> dict:
 @app.post("/api/chat")
 @limiter.limit(CHAT_RATE_LIMIT)
 async def chat(request: Request, req: ChatRequest):
-    # When WIDGET_API_KEY is configured, every chat request must include
-    # a matching X-Widget-Key header. This prevents unauthenticated abuse
-    # of the LLM (especially from the public /widget embed route).
-    if WIDGET_API_KEY:
-        client_key = request.headers.get("X-Widget-Key", "")
-        if client_key != WIDGET_API_KEY:
-            raise HTTPException(status_code=403, detail="Invalid or missing widget API key.")
+    # Validate the X-Widget-Key header to prevent unauthenticated abuse
+    # of the LLM.  First check the database for a matching active key,
+    # then fall back to the legacy env var for backwards compatibility.
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        db_match = await asyncio.to_thread(verify_api_key, client_key)
+        if not db_match and client_key != WIDGET_API_KEY_LEGACY:
+            raise HTTPException(status_code=403, detail="Invalid or revoked API key.")
+    elif WIDGET_API_KEY_LEGACY:
+        # No key provided but a legacy key is configured — require it.
+        raise HTTPException(status_code=403, detail="Missing widget API key.")
 
     log.info(
         "Chat | question=%r history_len=%d session_id=%s",
@@ -604,6 +623,115 @@ async def analytics(days: int = 30):
     """Return aggregated chat analytics for the admin dashboard."""
     data = await asyncio.to_thread(get_analytics, days)
     return data
+
+
+# ---------------------------------------------------------------------------
+# Admin authentication — server-to-server via INTERNAL_ADMIN_SECRET.
+#
+# Next.js calls these endpoints from server-side API routes (not from the
+# browser).  The shared secret proves the request came from our own frontend,
+# not from an attacker hitting the backend directly.
+# ---------------------------------------------------------------------------
+
+def _require_admin(request: Request) -> None:
+    """Validate the Authorization: Bearer <secret> header on admin routes.
+
+    Raises 401 if INTERNAL_ADMIN_SECRET is not configured (misconfiguration
+    safeguard) or if the provided token does not match.
+    """
+    if not INTERNAL_ADMIN_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="INTERNAL_ADMIN_SECRET is not configured on the server.",
+        )
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing admin authorization.")
+    token = auth_header[7:]
+    if token != INTERNAL_ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid admin authorization.")
+
+
+# ---------------------------------------------------------------------------
+# Admin — User management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/users")
+async def admin_list_users(request: Request):
+    """List all registered users (admin only)."""
+    _require_admin(request)
+    users = await asyncio.to_thread(list_users)
+    return {"users": users}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(request: Request, user_id: str):
+    """Delete a user and all their API keys (admin only)."""
+    _require_admin(request)
+    deleted = await asyncio.to_thread(delete_user, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found.")
+    log.info("Admin deleted user | id=%s", user_id)
+    return {"message": "User deleted."}
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@app.post("/api/admin/users/{user_id}/change-password")
+async def admin_change_password(request: Request, user_id: str, req: ChangePasswordRequest):
+    """Change a user's password (admin only, requires old password)."""
+    _require_admin(request)
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    success = await asyncio.to_thread(change_password, user_id, req.old_password, req.new_password)
+    if not success:
+        raise HTTPException(status_code=400, detail="Incorrect current password.")
+    log.info("Password changed | user_id=%s", user_id)
+    return {"message": "Password changed."}
+
+
+# ---------------------------------------------------------------------------
+# Admin — API key management
+# ---------------------------------------------------------------------------
+
+class CreateApiKeyRequest(BaseModel):
+    user_id: str
+    label: str
+
+
+@app.post("/api/admin/api-keys")
+async def admin_create_api_key(request: Request, req: CreateApiKeyRequest):
+    """Generate a new API key for a user (admin only).
+
+    The raw key is returned ONCE in this response.  It cannot be retrieved
+    again later — only the prefix is stored for display purposes.
+    """
+    _require_admin(request)
+    result = await asyncio.to_thread(create_api_key, req.user_id, req.label)
+    log.info("API key created | user_id=%s label=%s prefix=%s", req.user_id, req.label, result["prefix"])
+    return result
+
+
+@app.get("/api/admin/api-keys")
+async def admin_list_api_keys(request: Request, user_id: str):
+    """List all API keys for a user (admin only).  No secrets returned."""
+    _require_admin(request)
+    keys = await asyncio.to_thread(list_api_keys, user_id)
+    return {"api_keys": keys}
+
+
+@app.delete("/api/admin/api-keys/{key_id}")
+async def admin_revoke_api_key(request: Request, key_id: str):
+    """Revoke (deactivate) an API key (admin only)."""
+    _require_admin(request)
+    revoked = await asyncio.to_thread(revoke_api_key, key_id)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="API key not found or already revoked.")
+    log.info("API key revoked | key_id=%s", key_id)
+    return {"message": "API key revoked."}
 
 
 @app.get("/api/health")

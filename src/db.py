@@ -1,19 +1,23 @@
 """
 db.py
 
-Lightweight SQLite persistence for chat sessions and messages.
+Lightweight SQLite persistence for chat sessions, messages, users, and API keys.
 
 Uses Python's built-in sqlite3 module — no extra dependencies required.
 The database file is created alongside the ChromaDB data directory so that
 all persistent state lives in one predictable location.
 
 Tables:
+  users     — registered accounts with bcrypt-hashed passwords
+  api_keys  — per-user widget API keys (SHA-256 hashed, revocable)
   sessions  — one row per conversation (user_id groups by user)
   messages  — one row per user or assistant turn within a session
 """
 
+import hashlib
 import json
 import os
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +43,20 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
     created_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    key_hash   TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    prefix     TEXT NOT NULL,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_user   ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash   ON api_keys(key_hash);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,
@@ -247,6 +265,119 @@ def list_users() -> list[dict]:
             "SELECT id, username, name, role, created_at FROM users ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def delete_user(user_id: str) -> bool:
+    """Delete a user and all associated data (API keys cascade).
+
+    Returns True if a row was deleted, False if user_id was not found.
+    """
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    return cursor.rowcount > 0
+
+
+def change_password(user_id: str, old_password: str, new_password: str) -> bool:
+    """Verify old_password and replace it with a bcrypt hash of new_password.
+
+    Returns True on success, False if old_password is incorrect.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    if not row:
+        return False
+    if not _bcrypt.checkpw(old_password.encode(), row["password_hash"].encode()):
+        return False
+    new_hash = _bcrypt.hashpw(new_password.encode(), _bcrypt.gensalt()).decode()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id)
+        )
+    return True
+
+
+# ---------------------------------------------------------------------------
+# API Keys
+# ---------------------------------------------------------------------------
+
+def _hash_api_key(raw_key: str) -> str:
+    """One-way SHA-256 hash of a raw API key for storage and lookup."""
+    return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def create_api_key(user_id: str, label: str) -> dict:
+    """Generate a cryptographically secure API key for a user.
+
+    The raw key is returned ONCE in the response.  Only its SHA-256 hash
+    is stored in the database — the plaintext cannot be recovered later.
+    """
+    key_id = uuid4().hex
+    raw_key = "rag_" + secrets.token_urlsafe(32)
+    key_hash = _hash_api_key(raw_key)
+    # Prefix is the first 12 chars — enough to identify the key in a list
+    # without revealing the full secret.
+    prefix = raw_key[:12] + "..."
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO api_keys (id, user_id, key_hash, label, prefix, is_active, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?)",
+            (key_id, user_id, key_hash, label, prefix, now),
+        )
+    return {
+        "id": key_id,
+        "raw_key": raw_key,   # Shown to the user once, never stored
+        "label": label,
+        "prefix": prefix,
+        "is_active": True,
+        "created_at": now,
+    }
+
+
+def list_api_keys(user_id: str) -> list[dict]:
+    """Return all API keys for a user (without hashes)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, label, prefix, is_active, created_at "
+            "FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def revoke_api_key(key_id: str) -> bool:
+    """Deactivate an API key. Returns True if found and updated."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE api_keys SET is_active = 0 WHERE id = ? AND is_active = 1",
+            (key_id,),
+        )
+    return cursor.rowcount > 0
+
+
+def delete_api_key(key_id: str) -> bool:
+    """Permanently remove an API key. Returns True if found and deleted."""
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
+    return cursor.rowcount > 0
+
+
+def verify_api_key(raw_key: str) -> dict | None:
+    """Hash the raw key and look up an active match in the database.
+
+    Returns {"user_id": ..., "label": ...} on success, None if invalid
+    or revoked.
+    """
+    key_hash = _hash_api_key(raw_key)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id, label FROM api_keys "
+            "WHERE key_hash = ? AND is_active = 1",
+            (key_hash,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def _seed_default_admin() -> None:

@@ -1,0 +1,241 @@
+# Build Roadmap
+
+### Phase 1 — Project Scaffold
+- [x] Create directory structure (`docs/`, `src/`, `chroma_db/`)
+- [x] Write `requirements.txt`
+- [x] Write `.env.example`
+- [x] Initialize git repository and add `.gitignore` (exclude `chroma_db/`, `.env`, `docs/`)
+
+### Phase 2 — Document Ingestion (`src/ingest.py`)
+- [x] Recursively discover all `.pdf` files under `DOCS_PATH`
+- [x] Load each PDF with `PyPDFLoader`
+- [x] Split documents into chunks with `RecursiveCharacterTextSplitter`
+- [x] Generate embeddings (OpenAI `text-embedding-3-small` or local)
+- [x] Persist chunks and embeddings to ChromaDB
+- [x] Print ingestion summary (files processed, chunks stored)
+- [x] Add `--reset` flag to wipe and re-ingest from scratch
+
+### Phase 3 — Retriever (`src/retriever.py`)
+- [x] Load the persisted ChromaDB collection
+- [x] Expose a `get_retriever(k: int)` function returning a LangChain `VectorStoreRetriever`
+- [ ] Optionally add metadata filtering (e.g. by filename or date)
+
+### Phase 4 — RAG Chain (`src/chain.py`)
+- [x] Write a system prompt that instructs the LLM to answer only from provided context
+- [x] Build a `RetrievalQA` or `ConversationalRetrievalChain` using the retriever
+- [x] Include source document metadata (filename, page number) in the response
+- [x] Support swappable LLM backends via environment variable (`OPENAI`, `ANTHROPIC`, `OLLAMA`)
+
+### Phase 5 — Terminal Chat Interface (`src/chat.py`)
+- [x] Print startup banner with loaded document count
+- [x] Run an input loop: read question → invoke chain → print answer + sources
+- [x] Handle `/exit`, `/reset`, `/list` commands
+- [x] Maintain conversation history for follow-up questions
+
+### Phase 6 — Quality & Hardening
+- [x] Add chunk deduplication (skip re-ingesting unchanged files via content hash)
+- [x] Add logging to file for debugging ingestion and retrieval
+- [x] Evaluate retrieval quality with a small test question set
+- [ ] Tune `CHUNK_SIZE`, `CHUNK_OVERLAP`, and `TOP_K` based on evaluation
+
+### Phase 7 — Web UI (Next.js + FastAPI)
+- [x] FastAPI backend (`src/api.py`) with SSE streaming, PDF upload, document list endpoints
+- [x] Next.js 15 frontend scaffold (App Router, Tailwind CSS, TypeScript)
+- [x] Chat UI: streaming message bubbles, blinking cursor, auto-scroll
+- [x] PDF upload panel with drag-and-drop in the sidebar
+- [x] Source citation chips displayed below each assistant message
+- [x] Document list in sidebar (live-refreshed after upload)
+- [x] Markdown rendering in assistant messages (react-markdown + remark-gfm + rehype-highlight)
+- [x] Mobile-responsive layout (slide-over sidebar, hamburger menu, wider bubbles)
+
+### Phase 7b — Chat History & Analytics Foundation
+- [x] SQLite database module (`src/db.py`) with `sessions` and `messages` tables
+- [x] CRUD functions: create/get/list/delete sessions, add/get messages
+- [x] Auto-title sessions from first user question
+- [x] API endpoints: POST/GET/DELETE `/api/chat/sessions`, GET `/api/chat/sessions/{id}`
+- [x] Chat endpoint (`POST /api/chat`) auto-persists Q&A when `session_id` is provided
+- [x] Frontend: session management, history sidebar, load past conversations
+- [x] Analytics dashboard (message counts, popular questions, usage over time)
+
+### Phase 8 — Embeddable Chat Widget
+- [x] Standalone `/widget` route (full-screen chat, no sidebar, no auth)
+- [x] `embed-test.html` demo page with floating iframe toggle
+- [x] Disable Next.js dev indicator so it does not overlap widget input
+- [x] Configurable widget theme (colors, title) via query params (?title=, ?accent=, ?bg=)
+- [x] Origin allowlist for iframe embedding (CSP frame-ancestors via middleware + WIDGET_ALLOWED_ORIGINS env)
+- [x] `widget.js` — standalone embeddable script (vanilla JS, Shadow DOM, zero dependencies)
+- [x] One-line `<script>` integration for any external website
+- [x] SSE streaming direct to FastAPI backend with X-Widget-Key auth
+- [x] SessionStorage-based session persistence (chat history across page navigations)
+- [x] Safe text rendering (no innerHTML, XSS-proof, basic Markdown support)
+- [x] ARIA attributes, keyboard navigation (Enter/Escape), screen reader support
+- [x] Mobile-responsive (full-screen on small viewports)
+- [x] Typing indicator (animated dots), error banners, rate-limit handling
+- [x] Configurable via data-* attributes (api, key, title, accent, bg, position)
+
+### Phase 9 — User Management & Auth Hardening
+- [x] `users` table in SQLite with bcrypt password hashing
+- [x] CRUD functions: create_user, verify_user, get_user_by_username, list_users
+- [x] Default admin seed on first run (`admin` / `admin123` — change immediately)
+- [x] `POST /api/auth/login` — verify credentials against hashed passwords
+- [x] `POST /api/auth/register` — create new users with bcrypt hashing
+- [x] `auth.ts` calls FastAPI backend instead of hardcoded demo users
+- [x] `BACKEND_URL` env var for server-side auth calls
+- [x] `GET /api/analytics` endpoint with message counts, per-day stats, popular & recent questions
+- [x] Admin panel analytics tab with stat cards, bar chart, question lists
+- [x] `api_keys` table with SHA-256 hashed keys, per-user, revocable
+- [x] `INTERNAL_ADMIN_SECRET` server-to-server auth for admin endpoints
+- [x] `GET/DELETE /api/admin/users` — list and delete users (admin only)
+- [x] `POST /api/admin/users/{id}/change-password` — password change (admin only)
+- [x] `POST/GET/DELETE /api/admin/api-keys` — create, list, revoke API keys (admin only)
+- [x] `/api/chat` validates X-Widget-Key against DB-stored keys (with legacy env var fallback)
+- [x] Admin panel user management UI (list / create / delete users)
+- [x] Admin panel API key management UI (generate / revoke)
+- [x] Password change UI
+- [x] Toast notification system for all CRUD operations
+- [x] Next.js BFF layer (`lib/admin.ts`) — server-to-server, secret never exposed to browser
+
+---
+
+### Phase 10 — Production Resilience & CI/CD
+
+> Tavoite: Yksikään rikkinäinen commit ei pääse tuotantoon. Jokainen regressio havaitaan automaattisesti ennen deployta.
+
+**Backend-testit (pytest + httpx)**
+- [x] Luo `tests/` -hakemisto ja `pyproject.toml` pytest-konfiguraatiolla
+- [x] Yksikkötestit `db.py`:lle: käyttäjä-CRUD, sessiot, viestit, API-avainten hash-validointi (in-memory SQLite)
+- [x] Integraatiotestit `api.py`:lle — autentikaatio-endpointit, admin-endpointit (`INTERNAL_ADMIN_SECRET`-validointi), session-CRUD, health check (50 testiä, kaikki vihreällä)
+- [x] Yksikkötestit `chain.py`:lle: prompt-template, LLM-backend-valinta, invoke_chain, format_sources, build_chain (13 testiä, coverage 100 %)
+- [x] Integraatiotestit `api.py` `/api/chat` -endpointille: SSE-virran parsinta, session-persistointi, auto-title, widget API key -validointi, chat-historia (13 testiä)
+- [x] Yksikkötestit `ingest.py`:lle: PDF-lataus (fpdf2), chunkkaus (oikea RecursiveCharacterTextSplitter), overlap-validointi, deduplikaatio, `--reset`, reunatapaukset (tyhjä kansio, ei-PDF-tiedostot), metadata (28 testiä, coverage 92 %)
+- [ ] Yksikkötestit `retriever.py`:lle: `get_retriever()` palauttaa toimivan retrieverin, `TOP_K`-konfiguraatio vaikuttaa tuloksiin
+- [x] Testikattavuusraportti (`pytest-cov`) — kokonaiskattavuus 82 % (tavoite 80 % saavutettu)
+
+**Frontend-testit**
+- [ ] Vitest + React Testing Library -konfiguraatio (`vitest.config.ts`, `setup.ts`)
+- [ ] Yksikkötestit kriittisille komponenteille: `ChatWindow`, `MessageBubble` (markdown-renderöinti), `AdminPanel` (tab-navigointi), `Toast` (ilmoitusten lifecycle)
+- [ ] Yksikkötestit `lib/api.ts`:lle: fetch-wrapperin virheenkäsittely, SSE-parsinta, response-validointi
+- [ ] Yksikkötestit `lib/admin.ts`:lle: `unwrap<T>`-funktio, header-injektio, virhekäsittely
+- [ ] E2E-testit (Playwright): login-flow, chat-viesti lähetetään ja vastaus renderöityy, session-historia latautuu, admin-paneelin tab-navigointi, PDF-upload, widget-näkymä latautuu
+
+**CI/CD-pipeline (GitHub Actions)**
+- [ ] Luo `.github/workflows/ci.yml`: käynnistyy `push`- ja `pull_request`-eventeillä
+- [ ] Backend-vaihe: Python-setup, `pip install`, `pytest --cov` — pipeline feilaa jos testit eivät mene läpi
+- [ ] Frontend-vaihe: Node-setup, `npm ci`, `npm run lint`, `vitest run`, `npm run build` — pipeline feilaa jos buildi ei onnistu
+- [ ] E2E-vaihe: Playwright-testit headless-chromella (ajetaan vain `main`-branchissa tai PR-mergessä)
+- [ ] Branch protection -sääntö: `main`-branchiin ei voi pushata ilman vihreää CI-statusta
+- [ ] Dependabot tai Renovate -konfiguraatio riippuvuuspäivitysten automatisointiin
+
+**Tuotannon resilienssi**
+- [ ] Retry-logiikka `lib/api.ts`:ään: exponentiaalisesti kasvava backoff (max 3 yritystä) OpenAI/LLM-kutsujen epäonnistuessa
+- [ ] Retry-logiikka `chain.py`:ään: LLM-kutsun uudelleenyritys transienttien virheiden varalta (`RateLimitError`, `APIConnectionError`)
+- [ ] SSE-yhteyden uudelleenmuodostus frontendissä: jos stream katkeaa kesken vastauksen, näytä käyttäjälle virheilmoitus ja "Yritä uudelleen" -painike
+- [ ] Graceful degradation: jos ChromaDB ei ole tavoitettavissa, palauta selkeä virheilmoitus eikä 500-stacktrace
+- [ ] SQLite-yhteyksien hallinta: WAL-moodi (`PRAGMA journal_mode=WAL`) ja connection pooling (`check_same_thread=False`) samanaikaisten pyyntöjen tueksi
+- [ ] Health check -endpoint (`GET /api/health`): tarkistaa SQLite-, ChromaDB- ja LLM-yhteydet; Render voi käyttää tätä uptime-monitorointiin
+- [ ] Vercel-timeout-mitigaatio: pitkäkestoiset LLM-vastaukset SSE-streamina (jo toteutettu), mutta lisää keep-alive -kommenttirivit streamiin jotta Vercel ei katkaise yhteyttä 30 s kohdalla
+
+---
+
+### Phase 11 — RAG Quality & Evaluation (Kriittinen)
+
+> Tavoite: B2B-tuote ei saa hallusinoida. Jokainen vastaus on mitattavissa, ja laatu paranee systemaattisesti dataohjautuvasti.
+
+**Käyttäjäpalaute-mekanismi (thumbs up/down)**
+- [ ] Uusi `feedback`-taulu SQLiteen: `id`, `message_id` (FK → messages), `session_id`, `rating` (1 = hyvä, -1 = huono), `comment` (vapaaehtoinen tekstikenttä), `created_at`
+- [ ] `POST /api/chat/messages/{id}/feedback` -endpoint: tallentaa arvion tietokantaan
+- [ ] `GET /api/analytics/feedback` -endpoint: palauttaa aggregoidun palautedatan (% positiivinen, huonoimmat vastaukset, trendi ajan yli)
+- [ ] Frontend: 👍/👎 -painikkeet jokaisen assistant-viestin alle (`MessageBubble`-komponentti)
+- [ ] Admin-paneeliin uusi "Quality"-tab: huonoiten arvioidut vastaukset, palautetrendi, mahdollisuus tarkastella yksittäistä keskustelua kontekstissa
+
+**Automatisoitu evaluaatio-pipeline**
+- [ ] Luo `evaluation/` -hakemisto ja `evaluation/golden_set.json`: vähintään 30 kysymys–vastaus–lähde -kolmikkoa, jotka kattavat projektin dokumenttien sisällön
+- [ ] Evaluaatioskripti (`evaluation/evaluate.py`): ajaa golden set -kysymykset RAG-ketjun läpi ja laskee metrikat
+- [ ] Metrikat: answer relevancy (vastauksen osuvuus), faithfulness (vastaus perustuu kontekstiin, ei hallusinoi), context precision (haetut chunkit ovat relevantteja), context recall (kaikki tarvittavat chunkit löytyvät)
+- [ ] Ragas- tai TruLens-integraatio metrikoiden laskentaan (valitse toinen, älä molempia)
+- [ ] Evaluaatioraportti tallennetaan JSON-muotoon: jokainen kysymys, saatu vastaus, metrikat, käytetyt lähteet
+- [ ] GitHub Actions -integraatio: evaluaatio ajetaan CI:ssä ja raportti arkistoidaan artifaktina; pipeline varoittaa (mutta ei feilaa) jos faithfulness-keskiarvo laskee alle kynnysarvon
+
+**Chunkkaus-strategian optimointi**
+- [ ] Parametrisoitu benchmark-skripti: ajaa golden setin eri `CHUNK_SIZE` (500, 750, 1000, 1500) × `CHUNK_OVERLAP` (50, 100, 200, 300) × `TOP_K` (3, 5, 8, 10) -yhdistelmillä
+- [ ] Tulokset tallennetaan CSV-muotoon: parametrit, metrikat, latenssi, chunkkien määrä
+- [ ] Dokumentoi optimaalinen konfiguraatio ja lukitse se `.env.example`-tiedostoon perusteluineen
+- [ ] Embedding-mallin vertailu: `text-embedding-3-small` vs `text-embedding-3-large` — mittaa laatuero vs. kustannus ja latenssi
+
+**Hallusinaatioiden torjunta**
+- [ ] System promptin päivitys: lisää eksplisiittinen "jos konteksti ei riitä vastaamaan, sano se" -ohjeistus ja testaa sen vaikutus faithfulness-metrikkaan
+- [ ] Confidence-indikaattori: jos retriever palauttaa chunkit joiden similarity score on matala (alle kynnysarvon), lisää vastaukseen varoitus
+- [ ] Source verification UI: jokaisen vastauksen lähdeviittaukset ovat klikattavia ja näyttävät alkuperäisen chunk-tekstin
+
+---
+
+### Phase 12 — Infrastructure & Security Scaling
+
+> Tavoite: Tuotantoinfrastruktuuri kestää yritysasiakkaiden kuorman, data on turvassa, ja jokainen operaatio on jäljitettävissä.
+
+**Vektoritietokannan migraatio**
+- [ ] Abstraktiokerros: `src/vectorstore.py` joka piilottaa ChromaDB:n taakse yhtenäisen rajapinnan (`add_documents`, `search`, `delete_collection`, `backup`)
+- [ ] Pinecone/Qdrant/Weaviate -adapteri: valitse yksi hallinnoitu palvelu ja toteuta adapteri abstraktiokerroksen taakse
+- [ ] Migraatioskripti: lukee olemassa olevan ChromaDB-kokoelman ja siirtää kaikki dokumentit + metadata hallinnoiduun kantaan
+- [ ] Fallback-strategia: jos hallinnoitu palvelu ei ole tavoitettavissa, sovellus voi toimia read-only-tilassa lokaalista cachesta
+- [ ] ChromaDB S3-varmuuskopiointi (vaihtoehto hallinnoidulle palvelulle): automaattinen snapshot `chroma_db/`-hakemistosta S3:een cron-ajoituksella tai API-kutsulla
+- [ ] `VECTOR_DB_BACKEND`-ympäristömuuttuja: `chroma` (oletus) | `pinecone` | `qdrant` | `weaviate`
+
+**Audit-logitus**
+- [ ] Uusi `audit_log`-taulu: `id`, `timestamp`, `user_id`, `action` (enum: login, login_failed, password_change, user_create, user_delete, api_key_create, api_key_revoke, document_upload, document_delete, chat_query), `target_id`, `ip_address`, `details` (JSON)
+- [ ] Middleware-tason audit-logging `api.py`:ssä: jokainen admin-operaatio ja autentikaatiotapahtuma kirjataan automaattisesti
+- [ ] `GET /api/admin/audit-log` -endpoint: sivutettu listaus, filtteröitävissä action-tyypeillä ja aikavälillä
+- [ ] Admin-paneeliin "Audit Log" -tab: kronologinen lista tapahtumista, filtterit, CSV-export
+- [ ] Epäonnistuneiden kirjautumisyritysten seuranta: jos sama IP/käyttäjätunnus epäonnistuu 5 kertaa 15 minuutissa, lukitse tilapäisesti (account lockout)
+
+**Rate limiting -parannus**
+- [ ] Käyttäjäkohtainen rate limiting: IP-pohjaisen lisäksi API-avainkohtainen raja (eri rajat eri avaimille/tier-tasoille)
+- [ ] Rate limit -konfiguraatio per endpoint: admin-endpointeille tiukemmat rajat kuin chat-endpointille
+- [ ] Rate limit -headerit vastauksissa: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` — widget.js ja frontend voivat näyttää käyttäjälle jäljellä olevat pyynnöt
+- [ ] Redis-pohjainen rate limiting (valinnainen): kun siirrytään useampaan API-instanssiin, in-memory slowapi ei riitä
+
+**Tietoturvan koventaminen**
+- [ ] Login-yrityksen rate limiting: `slowapi`-rajoitus `/api/auth/login`-endpointille (max 10/minuutti per IP)
+- [ ] Session-invalidointi: admin voi pakottaa käyttäjän uloskirjautumisen (`force_logout`-kenttä users-tauluun, tarkistetaan jokaisessa pyynnössä)
+- [ ] CORS-konfiguraation validointi: varmista ettei `ALLOWED_ORIGINS` sisällä `*` tuotannossa (lisää startup-varoitus)
+- [ ] Helmet-tyyppiset security-headerit: `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` FastAPI-middleware-tasolla
+- [ ] Dependency-auditointi: `pip-audit` ja `npm audit` CI-pipelineen — pipeline feilaa kriittisistä haavoittuvuuksista
+
+---
+
+### Phase 13 — Advanced B2B Features & SaaS
+
+> Tavoite: Tuotteesta tulee moniasiakasympäristö, jossa jokainen organisaatio hallinnoi omia dokumenttejaan, käyttäjiään ja laskutustaan.
+
+**Multi-tenant-arkkitehtuuri**
+- [ ] `organizations`-taulu: `id`, `name`, `slug` (URL-ystävällinen), `plan` (free/pro/enterprise), `created_at`
+- [ ] `users`-tauluun `organization_id` (FK → organizations) — jokainen käyttäjä kuuluu yhteen organisaatioon
+- [ ] Organisaatiokohtaiset vektorikokoelmat: jokainen org saa oman ChromaDB-collectionin (tai Pinecone-namespacen), nimetty `org_{slug}_docs`
+- [ ] Tenant-isolaatio: middleware tarkistaa jokaisessa pyynnössä, että käyttäjä pääsee käsiksi vain oman organisaationsa dataan
+- [ ] API-avaimet sidottu organisaatioon: `api_keys`-tauluun `organization_id`, widget näkee vain oman orgin dokumentit
+- [ ] Organisaation hallintapaneeli: omistaja voi kutsua käyttäjiä, hallita rooleja, nähdä käyttötilastot
+
+**RBAC (Role-Based Access Control)**
+- [ ] Roolien laajennus: `owner` (organisaation omistaja), `admin` (hallinnoi käyttäjiä ja dokumentteja), `member` (chat + omat sessiot), `viewer` (vain luku)
+- [ ] Roolikohtaiset endpointit: dekoraattori `@require_role("admin")` joka tarkistaa roolin automaattisesti
+- [ ] Frontend-roolinäkyvyys: navigaatio ja UI-elementit piilottavat/näyttävät toiminnot roolin mukaan
+
+**Monipuolinen sisällön syöttö**
+- [ ] URL-pohjainen sisällön indeksointi: käyttäjä antaa URL-osoitteen → backend hakee sivun, parsii tekstin (BeautifulSoup/Trafilatura), chunkkaa ja indeksoi
+- [ ] Notion-integraatio: OAuth-yhteys Notion-workspaceen, sivujen automaattinen synkronointi vektoritietokantaan
+- [ ] Confluence-integraatio: API-avainpohjainen yhteys, sivujen haku ja indeksointi
+- [ ] Tiedostomuotojen laajennus: Word (.docx), PowerPoint (.pptx), Excel (.xlsx), Markdown (.md), pelkkä teksti (.txt)
+- [ ] Dokumenttien uudelleenindeksointi admin-paneelista: "Re-index" -painike joka ajaa ingestion uudelleen valituille dokumenteille
+- [ ] Metadata-filtteröinti haussa: käyttäjä voi rajata haun tiettyyn dokumenttiin, aikaväliin tai tagiin
+
+**Laskutus ja käyttörajoitukset**
+- [ ] Stripe-integraatio: subscription-pohjainen laskutus (free / pro / enterprise -tasot)
+- [ ] Käyttömittarit per organisaatio: kyselyjen määrä, indeksoitujen dokumenttien määrä, tallennustila
+- [ ] Plan-kohtaiset rajoitukset: free = 100 kyselyä/kk + 5 dokumenttia, pro = 5000 kyselyä/kk + 100 dokumenttia, enterprise = rajaton
+- [ ] Usage dashboard: organisaation omistaja näkee reaaliaikaisen käyttötilanteen ja laskutushistorian
+- [ ] Automaattinen ilmoitus kun käyttöraja lähestyy (80 %) ja kun se ylittyy
+
+**API-autentikaation modernisointi**
+- [ ] JWT-pohjainen autentikaatio: korvaa yksinkertainen widget key lyhytikäisillä JWT-tokeneilla (access + refresh token -pari)
+- [ ] API-versiointi: `/api/v1/chat`, `/api/v1/admin/*` — mahdollistaa rikkovat muutokset ilman vanhojen integraatioiden hajoamista
+- [ ] Webhook-tuki: organisaatio voi rekisteröidä webhook-URL:n joka saa ilmoituksen kun uusi dokumentti indeksoidaan tai kun käyttöraja ylittyy

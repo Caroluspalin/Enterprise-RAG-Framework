@@ -1,12 +1,16 @@
 # B2B RAG Chatbot
 
-A Retrieval-Augmented Generation (RAG) chatbot that ingests PDF documents and answers questions about them using LangChain and ChromaDB. Available as a terminal chat and a web UI (Next.js + FastAPI).
+> **SOP (Standard Operating Procedure):**
+> - Aina kun aloitamme uuden chatin, lue valittomasti `CLAUDE.md`, `ROADMAP.md` ja `STATE.md` ennen kuin teet mitaan oletuksia.
+> - Aina kun kayttaja antaa komennon **"Save state"**, sinun ON automaattisesti paivitettava `ROADMAP.md` tehdyilla asioilla ja kirjoitettava `STATE.md` -tiedostoon paivitetty nykytila ja uusi seuraava askel.
 
 ---
 
 ## Overview
 
-This project enables B2B teams to query internal documents (contracts, specs, reports, manuals) through a conversational terminal interface. Documents are chunked, embedded, and stored in a local vector database. At query time, relevant chunks are retrieved and passed to an LLM to generate grounded answers.
+A Retrieval-Augmented Generation (RAG) chatbot that ingests PDF documents and answers questions about them using LangChain and ChromaDB. Available as a terminal chat, a web UI (Next.js + FastAPI), and an embeddable widget for external sites.
+
+**Live:** https://enterprise-rag-framework.vercel.app
 
 ---
 
@@ -14,26 +18,47 @@ This project enables B2B teams to query internal documents (contracts, specs, re
 
 ```
 b2b-rag-chatbot/
-├── docs/                   # Drop your PDF files here
-├── chroma_db/              # Persisted ChromaDB vector store (auto-created)
+├── docs/                       # Drop PDF files here
+├── chroma_db/                  # Persisted ChromaDB vector store (auto-created)
 ├── src/
-│   ├── ingest.py           # Loads, chunks, and embeds PDFs into ChromaDB
-│   ├── retriever.py        # Wraps ChromaDB with a LangChain retriever
-│   ├── chain.py            # Builds the RAG chain (retriever + LLM + prompt)
-│   ├── chat.py             # Terminal chat loop (entry point)
-│   └── api.py              # FastAPI backend (SSE streaming, upload, doc list)
-├── frontend/               # Next.js 15 web UI
-│   ├── app/                # App Router pages and layout
-│   │   └── widget/         # Embeddable chat widget (no sidebar, no auth)
-│   ├── components/         # ChatWindow, MessageBubble, Sidebar, UploadPanel…
-│   ├── public/widget.js        # Embeddable chat widget script (vanilla JS, Shadow DOM)
-│   ├── public/embed-test.html  # Demo page showing the widget.js integration
-│   ├── lib/api.ts          # Fetch wrappers for the FastAPI backend
-│   └── types/index.ts      # Shared TypeScript types
-├── .env                    # API keys and config (not committed)
-├── .env.example            # Template for required environment variables
-├── requirements.txt
-└── CLAUDE.md
+│   ├── ingest.py               # Loads, chunks, and embeds PDFs into ChromaDB
+│   ├── retriever.py            # Wraps ChromaDB with a LangChain retriever
+│   ├── chain.py                # Builds the RAG chain (retriever + LLM + prompt)
+│   ├── chat.py                 # Terminal chat loop (entry point)
+│   ├── api.py                  # FastAPI backend (SSE streaming, admin, auth, upload)
+│   ├── db.py                   # SQLite persistence (users, sessions, messages, api_keys)
+│   └── logger.py               # Shared logging configuration
+├── frontend/                   # Next.js 15 web UI
+│   ├── app/                    # App Router pages and layout
+│   │   ├── admin/              # Admin panel page (server component, role guard)
+│   │   ├── api/admin/          # Next.js BFF routes (inject INTERNAL_ADMIN_SECRET)
+│   │   ├── widget/             # Embeddable chat widget (no sidebar, no auth)
+│   │   └── login/              # Login page
+│   ├── components/             # React components
+│   │   ├── AdminPanel.tsx      # Tabbed admin (Documents, Analytics, Users, API Keys)
+│   │   ├── UsersTab.tsx        # User CRUD + password change modals
+│   │   ├── ApiKeysTab.tsx      # API key management + "show once" secret banner
+│   │   ├── Toast.tsx           # Toast notification system
+│   │   ├── ChatWindow.tsx      # Message list with auto-scroll
+│   │   ├── ChatInput.tsx       # Input with Enter/Shift+Enter
+│   │   ├── MessageBubble.tsx   # User/assistant bubbles with markdown
+│   │   ├── Sidebar.tsx         # Session list, doc list, upload
+│   │   └── UploadPanel.tsx     # Drag-and-drop PDF upload
+│   ├── lib/
+│   │   ├── api.ts              # Browser-side fetch wrappers (chat, docs, sessions)
+│   │   └── admin.ts            # Server-side only BFF (injects admin secret)
+│   ├── public/
+│   │   ├── widget.js           # Standalone embeddable widget (vanilla JS, Shadow DOM)
+│   │   └── embed-test.html     # Demo page for widget.js
+│   ├── types/index.ts          # Shared TypeScript types
+│   ├── auth.ts                 # NextAuth v5 config (Credentials → FastAPI)
+│   └── middleware.ts           # Auth guard + widget CSP headers
+├── CLAUDE.md                   # This file — permanent architecture & rules
+├── ROADMAP.md                  # Build phases and checkboxes
+├── STATE.md                    # Current project state and next step
+├── .env                        # API keys and config (not committed)
+├── .env.example                # Template for required environment variables
+└── requirements.txt
 ```
 
 ### Data Flow
@@ -42,197 +67,112 @@ b2b-rag-chatbot/
 PDFs in docs/
      │
      ▼
-[ingest.py]
-  PyPDFLoader → text chunks (RecursiveCharacterTextSplitter)
+[ingest.py] → PyPDFLoader → RecursiveCharacterTextSplitter → OpenAI embeddings
      │
      ▼
-  OpenAI / local embeddings
+ChromaDB (persisted to chroma_db/)
      │
      ▼
-  ChromaDB (persisted to chroma_db/)
-     │
-     ▼
-[chat.py] ← user question
+[api.py] POST /api/chat ← user question + X-Widget-Key header
      │
      ▼
 [retriever.py] → top-k relevant chunks
      │
      ▼
-[chain.py] → LLM (Claude / OpenAI / Ollama) + context
-     │
-     ▼
-  Answer printed to terminal
+LCEL chain (prompt + LLM + StrOutputParser) → SSE token stream
 ```
+
+### Security Architecture
+
+```
+Browser (React / widget.js)
+  │ — NEVER sees INTERNAL_ADMIN_SECRET
+  │ — Sends X-Widget-Key for /api/chat
+  ▼
+Next.js (Vercel)
+  │ — NextAuth session check (role === "admin")
+  │ — Injects Authorization: Bearer <INTERNAL_ADMIN_SECRET>
+  ▼
+FastAPI (Render)
+  │ — Validates INTERNAL_ADMIN_SECRET on /api/admin/* routes
+  │ — Validates X-Widget-Key (DB hash lookup) on /api/chat
+  │ — Rate limiting (slowapi, per IP)
+  │ — CORS restricted to ALLOWED_ORIGINS
+  ▼
+SQLite (users, sessions, messages, api_keys)
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| LLM orchestration | LangChain (LCEL chains) |
+| Vector DB | ChromaDB (local, persistent) |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| LLM | Swappable: OpenAI GPT-4o / Claude / Ollama (via `LLM_BACKEND` env) |
+| Backend API | FastAPI + uvicorn, SSE streaming |
+| Database | SQLite (users, sessions, messages, api_keys) |
+| Frontend | Next.js 15 (App Router, Tailwind CSS, TypeScript) |
+| Auth | NextAuth v5 (Credentials provider → FastAPI bcrypt verification) |
+| Rate limiting | slowapi |
+| Widget | Vanilla JS, Shadow DOM, zero dependencies |
 
 ---
 
 ## Dependencies
 
-### Core
+### Python (requirements.txt)
 
 | Package | Purpose |
 |---|---|
-| `langchain` | Orchestration framework (chains, retrievers, prompts) |
-| `langchain-community` | PDF loaders, ChromaDB integration |
+| `langchain` | Orchestration framework |
 | `langchain-openai` | OpenAI LLM and embedding wrappers |
-| `chromadb` | Local persistent vector database |
+| `langchain-anthropic` | Claude models (optional) |
+| `langchain-chroma` | ChromaDB integration |
+| `chromadb` | Local vector database |
 | `pypdf` | PDF text extraction |
-| `python-dotenv` | Load environment variables from `.env` |
-| `bcrypt` | Secure password hashing (bcrypt algorithm) |
+| `fastapi` + `uvicorn` | Web API |
+| `slowapi` | Rate limiting |
+| `python-dotenv` | Environment variables |
+| `bcrypt` | Password hashing |
 
-### Optional
+### Frontend (package.json)
 
-| Package | Purpose |
-|---|---|
-| `langchain-anthropic` | Use Claude models instead of OpenAI |
-| `ollama` | Run local LLMs (no API key required) |
-| `tiktoken` | Token counting for chunking strategies |
-| `rich` | Prettier terminal output |
-
-Install all dependencies:
-
-```bash
-pip install -r requirements.txt
-```
+Next.js 15, React 19, Tailwind CSS, next-auth v5, react-markdown, uuid
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-cp .env.example .env
-```
+See `.env.example` for the full list. Key variables:
 
 ```ini
-# .env.example
-OPENAI_API_KEY=sk-...          # Required if using OpenAI embeddings or LLM
-ANTHROPIC_API_KEY=...          # Required if using Claude as the LLM
-COLLECTION_NAME=b2b_docs       # ChromaDB collection name
-DOCS_PATH=./docs               # Folder to scan for PDFs
-CHROMA_PATH=./chroma_db        # Where ChromaDB persists data
-CHUNK_SIZE=1000                # Characters per chunk
-CHUNK_OVERLAP=200              # Overlap between chunks
-TOP_K=5                        # Number of chunks retrieved per query
-ALLOWED_ORIGINS=https://myapp.vercel.app  # Comma-separated CORS origins
-WIDGET_API_KEY=                # Secret for X-Widget-Key header (generate with secrets.token_urlsafe)
-CHAT_RATE_LIMIT=5/minute       # Rate limit for /api/chat per IP
-BACKEND_URL=http://localhost:8000  # FastAPI URL for NextAuth server-side credential verification
+OPENAI_API_KEY=sk-...              # Required for embeddings and LLM
+LLM_BACKEND=openai                 # openai | anthropic | ollama
+ALLOWED_ORIGINS=https://...        # Comma-separated CORS origins
+WIDGET_API_KEY=                    # Legacy widget key (fallback)
+CHAT_RATE_LIMIT=5/minute           # Rate limit for /api/chat
+INTERNAL_ADMIN_SECRET=             # Server-to-server secret for admin endpoints
+BACKEND_URL=http://localhost:8000  # FastAPI URL (used by Next.js server-side)
 ```
 
 ---
 
-## Build Roadmap
-
-### Phase 1 — Project Scaffold
-- [ ] Create directory structure (`docs/`, `src/`, `chroma_db/`)
-- [ ] Write `requirements.txt`
-- [ ] Write `.env.example`
-- [ ] Initialize git repository and add `.gitignore` (exclude `chroma_db/`, `.env`, `docs/`)
-
-### Phase 2 — Document Ingestion (`src/ingest.py`)
-- [ ] Recursively discover all `.pdf` files under `DOCS_PATH`
-- [ ] Load each PDF with `PyPDFLoader`
-- [ ] Split documents into chunks with `RecursiveCharacterTextSplitter`
-- [ ] Generate embeddings (OpenAI `text-embedding-3-small` or local)
-- [ ] Persist chunks and embeddings to ChromaDB
-- [ ] Print ingestion summary (files processed, chunks stored)
-- [ ] Add `--reset` flag to wipe and re-ingest from scratch
-
-### Phase 3 — Retriever (`src/retriever.py`)
-- [ ] Load the persisted ChromaDB collection
-- [ ] Expose a `get_retriever(k: int)` function returning a LangChain `VectorStoreRetriever`
-- [ ] Optionally add metadata filtering (e.g. by filename or date)
-
-### Phase 4 — RAG Chain (`src/chain.py`)
-- [ ] Write a system prompt that instructs the LLM to answer only from provided context
-- [ ] Build a `RetrievalQA` or `ConversationalRetrievalChain` using the retriever
-- [ ] Include source document metadata (filename, page number) in the response
-- [ ] Support swappable LLM backends via environment variable (`OPENAI`, `ANTHROPIC`, `OLLAMA`)
-
-### Phase 5 — Terminal Chat Interface (`src/chat.py`)
-- [ ] Print startup banner with loaded document count
-- [ ] Run an input loop: read question → invoke chain → print answer + sources
-- [ ] Handle `/exit`, `/reset`, `/list` commands
-- [ ] Maintain conversation history for follow-up questions
-
-### Phase 6 — Quality & Hardening
-- [x] Add chunk deduplication (skip re-ingesting unchanged files via content hash)
-- [x] Add logging to file for debugging ingestion and retrieval
-- [x] Evaluate retrieval quality with a small test question set
-- [ ] Tune `CHUNK_SIZE`, `CHUNK_OVERLAP`, and `TOP_K` based on evaluation
-
-### Phase 7 — Web UI (Next.js + FastAPI)
-- [x] FastAPI backend (`src/api.py`) with SSE streaming, PDF upload, document list endpoints
-- [x] Next.js 15 frontend scaffold (App Router, Tailwind CSS, TypeScript)
-- [x] Chat UI: streaming message bubbles, blinking cursor, auto-scroll
-- [x] PDF upload panel with drag-and-drop in the sidebar
-- [x] Source citation chips displayed below each assistant message
-- [x] Document list in sidebar (live-refreshed after upload)
-- [x] Markdown rendering in assistant messages (react-markdown + remark-gfm + rehype-highlight)
-- [x] Mobile-responsive layout (slide-over sidebar, hamburger menu, wider bubbles)
-
-### Phase 7b — Chat History & Analytics Foundation
-- [x] SQLite database module (`src/db.py`) with `sessions` and `messages` tables
-- [x] CRUD functions: create/get/list/delete sessions, add/get messages
-- [x] Auto-title sessions from first user question
-- [x] API endpoints: POST/GET/DELETE `/api/chat/sessions`, GET `/api/chat/sessions/{id}`
-- [x] Chat endpoint (`POST /api/chat`) auto-persists Q&A when `session_id` is provided
-- [x] Frontend: session management, history sidebar, load past conversations
-- [x] Analytics dashboard (message counts, popular questions, usage over time)
-
-### Phase 8 — Embeddable Chat Widget
-- [x] Standalone `/widget` route (full-screen chat, no sidebar, no auth)
-- [x] `embed-test.html` demo page with floating iframe toggle
-- [x] Disable Next.js dev indicator so it does not overlap widget input
-- [x] Configurable widget theme (colors, title) via query params (?title=, ?accent=, ?bg=)
-- [x] Origin allowlist for iframe embedding (CSP frame-ancestors via middleware + WIDGET_ALLOWED_ORIGINS env)
-- [x] `widget.js` — standalone embeddable script (vanilla JS, Shadow DOM, zero dependencies)
-- [x] One-line `<script>` integration for any external website
-- [x] SSE streaming direct to FastAPI backend with X-Widget-Key auth
-- [x] SessionStorage-based session persistence (chat history across page navigations)
-- [x] Safe text rendering (no innerHTML, XSS-proof, basic Markdown support)
-- [x] ARIA attributes, keyboard navigation (Enter/Escape), screen reader support
-- [x] Mobile-responsive (full-screen on small viewports)
-- [x] Typing indicator (animated dots), error banners, rate-limit handling
-- [x] Configurable via data-* attributes (api, key, title, accent, bg, position)
-
-### Phase 9 — User Management & Auth Hardening
-- [x] `users` table in SQLite with bcrypt password hashing (passlib)
-- [x] CRUD functions: create_user, verify_user, get_user_by_username, list_users
-- [x] Default admin seed on first run (`admin` / `admin123` — change immediately)
-- [x] `POST /api/auth/login` — verify credentials against hashed passwords
-- [x] `POST /api/auth/register` — create new users with bcrypt hashing
-- [x] `auth.ts` calls FastAPI backend instead of hardcoded demo users
-- [x] `BACKEND_URL` env var for server-side auth calls
-- [x] `GET /api/analytics` endpoint with message counts, per-day stats, popular & recent questions
-- [x] Admin panel analytics tab with stat cards, bar chart, question lists
-- [ ] Admin panel user management (list / create / delete users)
-- [ ] Password change endpoint and UI
-- [ ] JWT-based API authentication (replace widget key with proper tokens)
-
----
-
-## Quick Start (once built)
+## Quick Start
 
 ```bash
-# 1. Install dependencies
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# Backend
+cd src && pip install -r ../requirements.txt
+uvicorn api:app --reload --port 8000
 
-# 2. Configure environment
-cp .env.example .env
-# Edit .env with your API key
+# Frontend
+cd frontend && npm install && npm run dev
 
-# 3. Add PDFs
-cp your-documents/*.pdf docs/
-
-# 4. Ingest documents
-python src/ingest.py
-
-# 5. Start chatting
-python src/chat.py
+# Open http://localhost:3000
+# Admin panel: /admin (requires admin role)
+# Widget demo: /embed-test.html
 ```
 
 ---
@@ -243,14 +183,21 @@ python src/chat.py
 
 **Chunk overlap** — prevents answers from being cut off at chunk boundaries; tune based on document type.
 
-**Source citation** — every answer includes filename and page number so users can verify claims in the source document.
+**Source citation** — every answer includes filename and page number so users can verify claims.
 
-**Swappable LLM** — the chain is decoupled from the model provider; switch between OpenAI, Claude, or a local Ollama model by changing one env variable.
+**Swappable LLM** — decoupled from the model provider; switch via one env variable.
+
+**Shadow DOM widget** — CSS-isolated, zero dependencies, works on any site with one `<script>` tag.
+
+**Server-to-server admin auth** — INTERNAL_ADMIN_SECRET shared between Next.js and FastAPI. Browser never sees it. NextAuth session + role check on the Next.js side, secret validation on the FastAPI side.
+
+**API key hashing** — raw keys shown once at creation, only SHA-256 hashes stored. Same model as GitHub/Stripe.
 
 ---
 
 ## Instructions for Claude
 
-- Keep this file up to date as the project evolves — file structure, roadmap checkboxes, design decisions. This is the primary source of truth for project state across sessions.
+- Keep `CLAUDE.md` focused on permanent architecture, stack, and rules. Mutable state goes in `STATE.md`, roadmap progress in `ROADMAP.md`.
 - Do not use emojis in code comments.
 - Comment code well: explain the *why* behind non-obvious logic, not just what the code does.
+- When completing work, update `ROADMAP.md` checkboxes and `STATE.md` accordingly.

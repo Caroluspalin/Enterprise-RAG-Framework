@@ -62,3 +62,28 @@ export interface AnalyticsData {
   recent_questions: RecentQuestion[];
   popular_questions: PopularQuestion[];
 }
+
+// ---------------------------------------------------------------------------
+// Admin — Users & API Keys
+// ---------------------------------------------------------------------------
+
+export interface User {
+  id: string;
+  username: string;
+  name: string;
+  role: "user" | "admin";
+  created_at: string;
+}
+
+export interface ApiKey {
+  id: string;
+  label: string;
+  prefix: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Returned only once when a new key is created. */
+export interface ApiKeyWithSecret extends ApiKey {
+  raw_key: string;
+}

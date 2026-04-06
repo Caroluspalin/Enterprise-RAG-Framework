@@ -4,12 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 import { deleteDocument, listDocuments, fetchAnalytics } from "@/lib/api";
 import type { Document, AnalyticsData } from "@/types";
 import UploadPanel from "@/components/UploadPanel";
+import UsersTab from "@/components/UsersTab";
+import ApiKeysTab from "@/components/ApiKeysTab";
+import ToastContainer from "@/components/Toast";
 
 // ---------------------------------------------------------------------------
 // Tab type
 // ---------------------------------------------------------------------------
 
-type Tab = "documents" | "analytics";
+type Tab = "documents" | "analytics" | "users" | "api-keys";
 
 // ---------------------------------------------------------------------------
 // Stat card — reusable small component for key metrics
@@ -141,19 +144,27 @@ export default function AdminPanel() {
     <div className="space-y-6">
       {/* Tab bar */}
       <div className="flex gap-1 rounded-lg border border-slate-800 bg-slate-900 p-1">
-        {(["documents", "analytics"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t
-                ? "bg-slate-800 text-white"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {t === "documents" ? "Documents" : "Analytics"}
-          </button>
-        ))}
+        {(["documents", "analytics", "users", "api-keys"] as Tab[]).map((t) => {
+          const labels: Record<Tab, string> = {
+            documents: "Documents",
+            analytics: "Analytics",
+            users: "Users",
+            "api-keys": "API Keys",
+          };
+          return (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                tab === t
+                  ? "bg-slate-800 text-white"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {labels[t]}
+            </button>
+          );
+        })}
       </div>
 
       {/* ----------------------------------------------------------------- */}
@@ -323,6 +334,19 @@ export default function AdminPanel() {
           ) : null}
         </div>
       )}
+
+      {/* ----------------------------------------------------------------- */}
+      {/* Users tab                                                          */}
+      {/* ----------------------------------------------------------------- */}
+      {tab === "users" && <UsersTab />}
+
+      {/* ----------------------------------------------------------------- */}
+      {/* API Keys tab                                                       */}
+      {/* ----------------------------------------------------------------- */}
+      {tab === "api-keys" && <ApiKeysTab />}
+
+      {/* Toast notifications */}
+      <ToastContainer />
     </div>
   );
 }
