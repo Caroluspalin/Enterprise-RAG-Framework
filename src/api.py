@@ -120,7 +120,9 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
+    # Explicitly list X-Widget-Key so CORS preflight accepts it from any origin.
     allow_headers=["*"],
+    expose_headers=["X-Widget-Key"],
 )
 
 

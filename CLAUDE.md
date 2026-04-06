@@ -26,7 +26,8 @@ b2b-rag-chatbot/
 │   ├── app/                # App Router pages and layout
 │   │   └── widget/         # Embeddable chat widget (no sidebar, no auth)
 │   ├── components/         # ChatWindow, MessageBubble, Sidebar, UploadPanel…
-│   ├── public/embed-test.html  # Demo page showing the widget in an iframe
+│   ├── public/widget.js        # Embeddable chat widget script (vanilla JS, Shadow DOM)
+│   ├── public/embed-test.html  # Demo page showing the widget.js integration
 │   ├── lib/api.ts          # Fetch wrappers for the FastAPI backend
 │   └── types/index.ts      # Shared TypeScript types
 ├── .env                    # API keys and config (not committed)
@@ -187,6 +188,15 @@ BACKEND_URL=http://localhost:8000  # FastAPI URL for NextAuth server-side creden
 - [x] Disable Next.js dev indicator so it does not overlap widget input
 - [x] Configurable widget theme (colors, title) via query params (?title=, ?accent=, ?bg=)
 - [x] Origin allowlist for iframe embedding (CSP frame-ancestors via middleware + WIDGET_ALLOWED_ORIGINS env)
+- [x] `widget.js` — standalone embeddable script (vanilla JS, Shadow DOM, zero dependencies)
+- [x] One-line `<script>` integration for any external website
+- [x] SSE streaming direct to FastAPI backend with X-Widget-Key auth
+- [x] SessionStorage-based session persistence (chat history across page navigations)
+- [x] Safe text rendering (no innerHTML, XSS-proof, basic Markdown support)
+- [x] ARIA attributes, keyboard navigation (Enter/Escape), screen reader support
+- [x] Mobile-responsive (full-screen on small viewports)
+- [x] Typing indicator (animated dots), error banners, rate-limit handling
+- [x] Configurable via data-* attributes (api, key, title, accent, bg, position)
 
 ### Phase 9 — User Management & Auth Hardening
 - [x] `users` table in SQLite with bcrypt password hashing (passlib)
