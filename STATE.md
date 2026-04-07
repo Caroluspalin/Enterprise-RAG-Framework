@@ -4,15 +4,14 @@ Paivitetty: 2026-04-07
 
 ## Viimeksi tehty
 
-- Phase 11 evaluaatioputki valmis (`scripts/evaluate.py`)
-  - Ragas-integraatio: Faithfulness + Answer Relevancy -metrikat
-  - Eksplisiittinen LLM (ChatOpenAI gpt-4o) ja embedding-malli (text-embedding-3-small) Ragasille
+- Phase 11 (RAG Quality & Evaluation) valmis
+  - Ragas-evaluaatioputki (`scripts/evaluate.py`): Faithfulness 1.0, Answer Relevancy 0.67
   - Golden dataset: 5 TechCorp-dokumentin faktoihin perustuvaa kysymys-vastaus-paria
-  - Tulokset tallennetaan `eval_results.json` -tiedostoon
-  - Faithfulness: 1.0 (taydellinen), Answer Relevancy: numeerinen tulos (ei enaa NaN)
-- Phase 10 CI/CD vihreana: GitHub Actions (`ci.yml`), Bandit-skannaus, pytest + coverage
-- Arkkitehtuurikorjaus: `db.py` init_db() siirretty FastAPI lifespan-eventiin
-- README.md paivitetty: CI-badge, uudet asennus- ja testiohjeet
+  - DRY-refaktorointi: SYSTEM_PROMPT ja load_llm() keskitetty `chain.py`:iin
+  - Lahdeviitteet poistettu promptista (valitetaan API-metadatana, ei raakatekstina)
+- Phase 10 (CI/CD) valmis: GitHub Actions, Bandit, pytest + coverage, db.py lifespan-korjaus
+- README.md: CI-badge, uudet asennus- ja testiohjeet
+- Projektin koko: 7 570 rivia koodia, 104 backend-testia vihrealla
 
 ## Tunnetut ongelmat / Keskeneraiset asiat
 
@@ -22,7 +21,7 @@ Paivitetty: 2026-04-07
 - `api.py` coverage 68 % — upload-, documents-, delete-endpointit testaamatta
 - CI/CD: frontend-vaihe, E2E-vaihe, branch protection ja Dependabot viela tekematta
 - Frontend-testit (Vitest, Playwright) puuttuvat
-- Phase 11 keskeneraiset: golden datasetin laajennus 30 kysymykseen, context precision/recall -metrikat, CI-integraatio
+- Phase 11 jatkokehitys: golden datasetin laajennus 30 kysymykseen, context precision/recall, CI-integraatio, chunkkaus-optimointi, confidence-indikaattori
 
 ## Deployment-ymparistomuuttujat
 

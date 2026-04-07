@@ -169,7 +169,8 @@
 - [ ] Embedding-mallin vertailu: `text-embedding-3-small` vs `text-embedding-3-large` — mittaa laatuero vs. kustannus ja latenssi
 
 **Hallusinaatioiden torjunta**
-- [ ] System promptin päivitys: lisää eksplisiittinen "jos konteksti ei riitä vastaamaan, sano se" -ohjeistus ja testaa sen vaikutus faithfulness-metrikkaan
+- [x] System promptin päivitys: eksplisiittinen "jos konteksti ei riitä, sano se" -ohjeistus + lähdeviitteiden poisto promptista (metadata via API). Faithfulness 1.0.
+- [x] DRY-refaktorointi: SYSTEM_PROMPT ja load_llm() keskitetty `chain.py`:iin — api.py ja evaluate.py käyttävät samaa totuuden lähdettä
 - [ ] Confidence-indikaattori: jos retriever palauttaa chunkit joiden similarity score on matala (alle kynnysarvon), lisää vastaukseen varoitus
 - [ ] Source verification UI: jokaisen vastauksen lähdeviittaukset ovat klikattavia ja näyttävät alkuperäisen chunk-tekstin
 

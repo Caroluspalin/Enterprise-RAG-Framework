@@ -77,6 +77,19 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id         TEXT PRIMARY KEY,
+    timestamp  TEXT NOT NULL,
+    user_id    TEXT,
+    action     TEXT NOT NULL,
+    ip_address TEXT,
+    details    TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action    ON audit_log(action);
 """
 
 

@@ -63,6 +63,7 @@ from db import (
     verify_api_key,
     verify_user,
 )
+from audit import get_audit_logs, log_event
 from chain import SYSTEM_PROMPT, load_llm
 from logger import get_logger
 from retriever import get_retriever
@@ -353,7 +354,7 @@ async def chat(request: Request, req: ChatRequest):
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(request: Request, file: UploadFile = File(...)):
     """Save an uploaded PDF to DOCS_PATH and ingest it into ChromaDB."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
@@ -364,7 +365,8 @@ async def upload(file: UploadFile = File(...)):
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    log.info("PDF received: %s (%.1f KB)", file.filename, dest.stat().st_size / 1024)
+    size_kb = round(dest.stat().st_size / 1024, 1)
+    log.info("PDF received: %s (%.1f KB)", file.filename, size_kb)
 
     # Ingestion is CPU/IO-bound — run it in a thread so we don't block the loop.
     try:
@@ -375,6 +377,12 @@ async def upload(file: UploadFile = File(...)):
 
     # Invalidate the retriever so the next chat request picks up the new content.
     _invalidate_components()
+
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, None, "DOC_UPLOADED", ip,
+        {"filename": file.filename, "size_kb": size_kb},
+    )
 
     return {"message": f"'{file.filename}' ingested successfully."}
 
@@ -450,7 +458,7 @@ async def list_documents():
 
 
 @app.delete("/api/documents/{filename}")
-async def delete_document(filename: str):
+async def delete_document(request: Request, filename: str):
     """Remove all vector store embeddings for filename and delete the PDF from disk.
 
     Steps:
@@ -487,6 +495,12 @@ async def delete_document(filename: str):
 
     # Drop cached retriever so the next request rebuilds it without this file.
     _invalidate_components()
+
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, None, "DOC_DELETED", ip,
+        {"filename": filename, "chunks_removed": chunks_deleted},
+    )
 
     return {
         "message": f"'{filename}' deleted successfully.",
@@ -556,26 +570,42 @@ class RegisterRequest(BaseModel):
 
 
 @app.post("/api/auth/login")
-async def login(req: LoginRequest):
+async def login(request: Request, req: LoginRequest):
     """Verify credentials and return user info (without password hash).
 
     The actual session/token management lives in NextAuth on the frontend;
     this endpoint just validates username + bcrypt hash in SQLite.
     """
+    ip = request.client.host if request.client else None
     user = await asyncio.to_thread(verify_user, req.username, req.password)
     if not user:
+        # Log the failed attempt — user_id is unknown, so record the username
+        # in details for investigation purposes.
+        await asyncio.to_thread(
+            log_event, None, "LOGIN_FAILED", ip,
+            {"username": req.username},
+        )
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    await asyncio.to_thread(
+        log_event, user["id"], "LOGIN_SUCCESS", ip,
+        {"username": user["username"]},
+    )
     log.info("Login successful | user=%s role=%s", user["username"], user["role"])
     return user
 
 
 @app.post("/api/auth/register")
-async def register(req: RegisterRequest):
+async def register(request: Request, req: RegisterRequest):
     """Create a new user account with a bcrypt-hashed password."""
     existing = await asyncio.to_thread(get_user_by_username, req.username)
     if existing:
         raise HTTPException(status_code=409, detail="Username already taken.")
     user = await asyncio.to_thread(create_user, req.username, req.password, req.name, req.role)
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, user["id"], "USER_CREATED", ip,
+        {"username": user["username"], "role": user["role"]},
+    )
     log.info("User registered | user=%s role=%s", user["username"], user["role"])
     return user
 
@@ -637,6 +667,11 @@ async def admin_delete_user(request: Request, user_id: str):
     deleted = await asyncio.to_thread(delete_user, user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="User not found.")
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, None, "USER_DELETED", ip,
+        {"target_user_id": user_id},
+    )
     log.info("Admin deleted user | id=%s", user_id)
     return {"message": "User deleted."}
 
@@ -655,6 +690,10 @@ async def admin_change_password(request: Request, user_id: str, req: ChangePassw
     success = await asyncio.to_thread(change_password, user_id, req.old_password, req.new_password)
     if not success:
         raise HTTPException(status_code=400, detail="Incorrect current password.")
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, user_id, "PASSWORD_CHANGED", ip, None,
+    )
     log.info("Password changed | user_id=%s", user_id)
     return {"message": "Password changed."}
 
@@ -677,6 +716,11 @@ async def admin_create_api_key(request: Request, req: CreateApiKeyRequest):
     """
     _require_admin(request)
     result = await asyncio.to_thread(create_api_key, req.user_id, req.label)
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, req.user_id, "API_KEY_CREATED", ip,
+        {"label": req.label, "prefix": result["prefix"]},
+    )
     log.info("API key created | user_id=%s label=%s prefix=%s", req.user_id, req.label, result["prefix"])
     return result
 
@@ -696,8 +740,25 @@ async def admin_revoke_api_key(request: Request, key_id: str):
     revoked = await asyncio.to_thread(revoke_api_key, key_id)
     if not revoked:
         raise HTTPException(status_code=404, detail="API key not found or already revoked.")
+    ip = request.client.host if request.client else None
+    await asyncio.to_thread(
+        log_event, None, "API_KEY_REVOKED", ip,
+        {"key_id": key_id},
+    )
     log.info("API key revoked | key_id=%s", key_id)
     return {"message": "API key revoked."}
+
+
+# ---------------------------------------------------------------------------
+# Admin — Audit log
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/audit-logs")
+async def admin_get_audit_logs(request: Request, limit: int = 100):
+    """Return the most recent audit log entries (admin only)."""
+    _require_admin(request)
+    logs = await asyncio.to_thread(get_audit_logs, limit)
+    return {"audit_logs": logs}
 
 
 @app.get("/api/health")
