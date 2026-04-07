@@ -69,6 +69,7 @@ from db import (
 # (e.g. anonymous widget calls before multi-tenant is fully rolled out).
 DEFAULT_TENANT = "default"
 from audit import get_audit_logs, log_event
+from billing import UsageLimitExceeded, check_and_track_usage
 from chain import SYSTEM_PROMPT, load_llm
 from limiter import rate_limiter
 from logger import get_logger
@@ -440,6 +441,19 @@ async def chat(request: Request, req: ChatRequest):
         _resolve_tenant_id, req.user_id, api_key_info,
     )
 
+    # Billing gate — block the request before any LLM or retriever work
+    # if the organisation has exhausted its monthly quota.
+    try:
+        await asyncio.to_thread(
+            check_and_track_usage, tenant_id, "/api/chat",
+        )
+    except UsageLimitExceeded as exc:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Monthly API call limit reached for your plan ('{exc.plan}'). "
+            f"Limit: {exc.limit}, used: {exc.current}. Please upgrade.",
+        )
+
     # Tier-aware rate limiting — keyed by user_id (or IP for anonymous).
     rate_key = req.user_id if req.user_id != "anonymous" else (
         request.client.host if request.client else "unknown"
@@ -484,6 +498,18 @@ async def upload(
     tenant_id = await asyncio.to_thread(
         _resolve_tenant_id, user_id, api_key_info,
     )
+
+    # Billing gate — reject upload before writing to disk if quota exhausted.
+    try:
+        await asyncio.to_thread(
+            check_and_track_usage, tenant_id, "/api/upload",
+        )
+    except UsageLimitExceeded as exc:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Monthly API call limit reached for your plan ('{exc.plan}'). "
+            f"Limit: {exc.limit}, used: {exc.current}. Please upgrade.",
+        )
 
     # Rate limit uploads by IP — there is no authenticated user context here.
     upload_key = request.client.host if request.client else "unknown"

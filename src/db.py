@@ -36,9 +36,12 @@ DB_PATH = Path(os.getenv("CHAT_DB_PATH", "./chat_history.db"))
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS organizations (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    id                 TEXT PRIMARY KEY,
+    name               TEXT NOT NULL,
+    subscription_plan  TEXT NOT NULL DEFAULT 'free' CHECK (subscription_plan IN ('free', 'pro', 'enterprise')),
+    api_calls_count    INTEGER NOT NULL DEFAULT 0,
+    stripe_customer_id TEXT,
+    created_at         TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -108,6 +111,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action    ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_org       ON audit_log(organization_id);
+
+CREATE TABLE IF NOT EXISTS usage_logs (
+    id              TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    timestamp       TEXT NOT NULL,
+    tokens_used     INTEGER NOT NULL DEFAULT 0,
+    endpoint        TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_logs_org       ON usage_logs(organization_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_timestamp ON usage_logs(timestamp DESC);
 """
 
 
@@ -157,6 +172,22 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE audit_log ADD COLUMN organization_id TEXT"
             )
+        # Migrations for databases created before billing support.
+        org_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(organizations)").fetchall()
+        }
+        if "subscription_plan" not in org_cols:
+            conn.execute(
+                "ALTER TABLE organizations ADD COLUMN subscription_plan TEXT NOT NULL DEFAULT 'free'"
+            )
+        if "api_calls_count" not in org_cols:
+            conn.execute(
+                "ALTER TABLE organizations ADD COLUMN api_calls_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "stripe_customer_id" not in org_cols:
+            conn.execute(
+                "ALTER TABLE organizations ADD COLUMN stripe_customer_id TEXT"
+            )
     _seed_default_admin()
 
 
@@ -164,23 +195,31 @@ def init_db() -> None:
 # Organizations
 # ---------------------------------------------------------------------------
 
-def create_organization(name: str) -> dict:
+def create_organization(
+    name: str,
+    subscription_plan: str = "free",
+) -> dict:
     """Create a new organization and return it as a dict."""
     org_id = uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO organizations (id, name, created_at) VALUES (?, ?, ?)",
-            (org_id, name, now),
+            "INSERT INTO organizations (id, name, subscription_plan, api_calls_count, created_at) "
+            "VALUES (?, ?, ?, 0, ?)",
+            (org_id, name, subscription_plan, now),
         )
-    return {"id": org_id, "name": name, "created_at": now}
+    return {
+        "id": org_id, "name": name, "subscription_plan": subscription_plan,
+        "api_calls_count": 0, "stripe_customer_id": None, "created_at": now,
+    }
 
 
 def get_organization(org_id: str) -> dict | None:
     """Return a single organization or None."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, name, created_at FROM organizations WHERE id = ?",
+            "SELECT id, name, subscription_plan, api_calls_count, stripe_customer_id, created_at "
+            "FROM organizations WHERE id = ?",
             (org_id,),
         ).fetchone()
     return dict(row) if row else None
@@ -190,7 +229,8 @@ def list_organizations() -> list[dict]:
     """Return all organizations, newest first."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, created_at FROM organizations ORDER BY created_at DESC"
+            "SELECT id, name, subscription_plan, api_calls_count, stripe_customer_id, created_at "
+            "FROM organizations ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -200,6 +240,59 @@ def delete_organization(org_id: str) -> bool:
     with _connect() as conn:
         cursor = conn.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
     return cursor.rowcount > 0
+
+
+def increment_api_calls(org_id: str) -> int:
+    """Atomically increment api_calls_count and return the new value."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE organizations SET api_calls_count = api_calls_count + 1 WHERE id = ?",
+            (org_id,),
+        )
+        row = conn.execute(
+            "SELECT api_calls_count FROM organizations WHERE id = ?",
+            (org_id,),
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def reset_api_calls(org_id: str) -> None:
+    """Reset the monthly API call counter to zero (called by billing cycle)."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE organizations SET api_calls_count = 0 WHERE id = ?",
+            (org_id,),
+        )
+
+
+def add_usage_log(
+    organization_id: str, endpoint: str, tokens_used: int = 0,
+) -> dict:
+    """Record a single API usage event in the usage_logs table."""
+    log_id = uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO usage_logs (id, organization_id, timestamp, tokens_used, endpoint) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (log_id, organization_id, now, tokens_used, endpoint),
+        )
+    return {
+        "id": log_id, "organization_id": organization_id,
+        "timestamp": now, "tokens_used": tokens_used, "endpoint": endpoint,
+    }
+
+
+def get_usage_logs(organization_id: str, limit: int = 100) -> list[dict]:
+    """Return recent usage log entries for an organization."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, organization_id, timestamp, tokens_used, endpoint "
+            "FROM usage_logs WHERE organization_id = ? "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (organization_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------
