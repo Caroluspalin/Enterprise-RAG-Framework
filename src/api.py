@@ -64,6 +64,10 @@ from db import (
     verify_api_key,
     verify_user,
 )
+
+# Default tenant for requests that don't carry an organisation context
+# (e.g. anonymous widget calls before multi-tenant is fully rolled out).
+DEFAULT_TENANT = "default"
 from audit import get_audit_logs, log_event
 from chain import SYSTEM_PROMPT, load_llm
 from limiter import rate_limiter
@@ -161,7 +165,6 @@ app.add_middleware(SecurityHeadersMiddleware)
 # up on every request, so we create them once and reuse.
 # ---------------------------------------------------------------------------
 
-_retriever = None
 _llm = None
 _prompt = None
 
@@ -176,23 +179,54 @@ def _build_prompt() -> ChatPromptTemplate:
     ])
 
 
-def _get_components():
-    """Return (retriever, llm, prompt), building them on first call."""
-    global _retriever, _llm, _prompt
-    if _retriever is None:
-        log.info("Initialising retriever, LLM, and prompt (first request)")
-        _retriever = get_retriever()
+def _get_components(tenant_id: str = DEFAULT_TENANT):
+    """Return (retriever, llm, prompt), building LLM/prompt on first call.
+
+    The retriever is created fresh for each tenant_id to ensure data isolation.
+    LLM and prompt are tenant-agnostic and can be shared.
+    """
+    global _llm, _prompt
+    if _llm is None:
+        log.info("Initialising LLM and prompt (first request)")
         _llm = load_llm()
         _prompt = _build_prompt()
-    return _retriever, _llm, _prompt
+    # Always build a tenant-scoped retriever — never cache across tenants.
+    retriever = get_retriever(tenant_id=tenant_id)
+    return retriever, _llm, _prompt
 
 
 def _invalidate_components():
-    """Drop cached singletons so the next request picks up newly ingested docs."""
-    global _retriever, _llm, _prompt
-    _retriever = None
+    """Drop cached LLM/prompt so they are rebuilt on next request."""
+    global _llm, _prompt
     _llm = None
     _prompt = None
+
+
+# ---------------------------------------------------------------------------
+# Tenant resolution — determines which organisation a request belongs to
+# ---------------------------------------------------------------------------
+
+def _resolve_tenant_id(
+    user_id: str | None = None,
+    api_key_info: dict | None = None,
+) -> str:
+    """Determine the tenant (organization_id) for the current request.
+
+    Resolution order:
+      1. API key's organization_id (widget requests carry the key's org).
+      2. Authenticated user's organization_id from the database.
+      3. Falls back to DEFAULT_TENANT for anonymous / org-less users.
+    """
+    # API key takes precedence — widgets are bound to a specific org.
+    if api_key_info and api_key_info.get("organization_id"):
+        return api_key_info["organization_id"]
+
+    if user_id and user_id != "anonymous":
+        user = get_user_by_id(user_id)
+        if user and user.get("organization_id"):
+            return user["organization_id"]
+
+    return DEFAULT_TENANT
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +261,7 @@ async def _stream_sse(
     history: list[ChatMessage],
     session_id: str | None = None,
     user_id: str = "anonymous",
+    tenant_id: str = DEFAULT_TENANT,
 ) -> AsyncIterator[str]:
     """Yield Server-Sent Event strings for each token, then sources, then done.
 
@@ -234,11 +269,14 @@ async def _stream_sse(
     The retrieved context is then injected directly into the prompt so the LLM
     generation step can stream without waiting for a second async retrieval call.
 
+    tenant_id scopes retrieval to the caller's organisation so that documents
+    belonging to other tenants are never surfaced.
+
     When session_id is provided, the user question and the completed assistant
     answer are persisted to the SQLite database.  If session_id is given but
     does not exist yet, a new session is created automatically.
     """
-    retriever, llm, prompt = _get_components()
+    retriever, llm, prompt = _get_components(tenant_id=tenant_id)
 
     # -- Persist the user message and auto-create session if needed -----------
     if session_id:
@@ -382,14 +420,21 @@ async def chat(request: Request, req: ChatRequest):
     # Validate the X-Widget-Key header to prevent unauthenticated abuse
     # of the LLM.  First check the database for a matching active key,
     # then fall back to the legacy env var for backwards compatibility.
+    api_key_info: dict | None = None
     client_key = request.headers.get("X-Widget-Key", "")
     if client_key:
-        db_match = await asyncio.to_thread(verify_api_key, client_key)
-        if not db_match and client_key != WIDGET_API_KEY_LEGACY:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+        if not api_key_info and client_key != WIDGET_API_KEY_LEGACY:
             raise HTTPException(status_code=403, detail="Invalid or revoked API key.")
     elif WIDGET_API_KEY_LEGACY:
         # No key provided but a legacy key is configured — require it.
         raise HTTPException(status_code=403, detail="Missing widget API key.")
+
+    # Resolve the tenant for this request so the retriever only sees
+    # documents belonging to the caller's organisation.
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, req.user_id, api_key_info,
+    )
 
     # Tier-aware rate limiting — keyed by user_id (or IP for anonymous).
     rate_key = req.user_id if req.user_id != "anonymous" else (
@@ -399,11 +444,11 @@ async def chat(request: Request, req: ChatRequest):
     rl_headers = _apply_rate_limit(rate_key, tier)
 
     log.info(
-        "Chat | question=%r history_len=%d session_id=%s",
-        req.question, len(req.history), req.session_id,
+        "Chat | question=%r history_len=%d session_id=%s tenant=%s",
+        req.question, len(req.history), req.session_id, tenant_id,
     )
     return StreamingResponse(
-        _stream_sse(req.question, req.history, req.session_id, req.user_id),
+        _stream_sse(req.question, req.history, req.session_id, req.user_id, tenant_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -414,8 +459,25 @@ async def chat(request: Request, req: ChatRequest):
 
 
 @app.post("/api/upload")
-async def upload(request: Request, file: UploadFile = File(...)):
-    """Save an uploaded PDF to DOCS_PATH and ingest it into ChromaDB."""
+async def upload(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = "anonymous",
+):
+    """Save an uploaded PDF to DOCS_PATH and ingest it into ChromaDB.
+
+    The document is tagged with the uploader's organization so it is only
+    visible to users in the same tenant.
+    """
+    # Resolve tenant from user or API key before touching the file.
+    api_key_info: dict | None = None
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, user_id, api_key_info,
+    )
+
     # Rate limit uploads by IP — there is no authenticated user context here.
     upload_key = request.client.host if request.client else "unknown"
     tier = "FREE_USER"
@@ -431,32 +493,35 @@ async def upload(request: Request, file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
 
     size_kb = round(dest.stat().st_size / 1024, 1)
-    log.info("PDF received: %s (%.1f KB)", file.filename, size_kb)
+    log.info("PDF received: %s (%.1f KB) tenant=%s", file.filename, size_kb, tenant_id)
 
     # Ingestion is CPU/IO-bound — run it in a thread so we don't block the loop.
     try:
-        await asyncio.to_thread(_ingest_pdf, dest)
+        await asyncio.to_thread(_ingest_pdf, dest, tenant_id)
     except Exception as exc:
         log.exception("Ingestion failed for %s", file.filename)
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
 
-    # Invalidate the retriever so the next chat request picks up the new content.
-    _invalidate_components()
+    # No need to invalidate components — retrievers are created per-tenant
+    # on each request, so new documents are picked up automatically.
 
     ip = request.client.host if request.client else None
+    org_id = tenant_id if tenant_id != DEFAULT_TENANT else None
     await asyncio.to_thread(
         log_event, None, "DOC_UPLOADED", ip,
-        {"filename": file.filename, "size_kb": size_kb},
+        {"filename": file.filename, "size_kb": size_kb, "tenant_id": tenant_id},
+        organization_id=org_id,
     )
 
     return {"message": f"'{file.filename}' ingested successfully."}
 
 
-def _ingest_pdf(pdf_path: Path) -> None:
+def _ingest_pdf(pdf_path: Path, tenant_id: str = DEFAULT_TENANT) -> None:
     """Ingest a single PDF into the vector store (called from a thread pool).
 
     Reuses load_and_split() and compute_file_hash() from ingest.py to keep
     chunking behaviour identical between the CLI and the web upload path.
+    tenant_id is stamped on every chunk so retrieval is tenant-scoped.
     """
     from ingest import compute_file_hash, load_and_split
     from langchain_openai import OpenAIEmbeddings
@@ -466,10 +531,10 @@ def _ingest_pdf(pdf_path: Path) -> None:
 
     file_hash = compute_file_hash(pdf_path)
 
-    # Skip re-ingestion if the file content has not changed.
-    existing_hashes = {m.get("file_hash") for m in store.get_all_metadata()}
+    # Skip re-ingestion if the file content has not changed within this tenant.
+    existing_hashes = {m.get("file_hash") for m in store.get_all_metadata(tenant_id=tenant_id)}
     if file_hash in existing_hashes:
-        log.info("Skipping unchanged file: %s", pdf_path.name)
+        log.info("Skipping unchanged file: %s (tenant=%s)", pdf_path.name, tenant_id)
         return
 
     chunks = load_and_split(pdf_path)
@@ -485,22 +550,33 @@ def _ingest_pdf(pdf_path: Path) -> None:
     ]
     vectors = embeddings_model.embed_documents(documents)
 
-    store.add_documents(ids=ids, documents=documents, metadatas=metadatas, embeddings=vectors)
-    log.info("Ingested %s | chunks=%d", pdf_path.name, len(chunks))
+    store.add_documents(
+        ids=ids, documents=documents, metadatas=metadatas,
+        embeddings=vectors, tenant_id=tenant_id,
+    )
+    log.info("Ingested %s | chunks=%d tenant=%s", pdf_path.name, len(chunks), tenant_id)
 
 
 @app.get("/api/documents")
-async def list_documents():
-    """Return unique filenames currently in the vector store.
+async def list_documents(request: Request, user_id: str = "anonymous"):
+    """Return unique filenames currently in the vector store for the caller's tenant.
 
     Reading from the vector store (not just DOCS_PATH) ensures the list
     accurately reflects what the RAG pipeline can actually retrieve from.
+    Only documents belonging to the caller's organisation are returned.
     """
+    api_key_info: dict | None = None
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, user_id, api_key_info,
+    )
 
     def _query_store():
         try:
             store = get_vector_store()
-            metadatas = store.get_all_metadata()
+            metadatas = store.get_all_metadata(tenant_id=tenant_id)
         except Exception:
             return []
 
@@ -523,15 +599,19 @@ async def list_documents():
 
 
 @app.delete("/api/documents/{filename}")
-async def delete_document(request: Request, filename: str):
-    """Remove all vector store embeddings for filename and delete the PDF from disk.
+async def delete_document(request: Request, filename: str, user_id: str = "anonymous"):
+    """Remove all vector store embeddings for filename within the caller's tenant.
 
-    Steps:
-      1. Delete all chunks where source_file == filename via the vector store.
-      2. Delete the physical PDF file from DOCS_PATH (if it exists).
-      3. Invalidate the retriever cache so the next chat request does not
-         serve stale results from the now-deleted document.
+    Only deletes chunks that belong to the caller's organisation — other
+    tenants' data with the same filename is never touched.
     """
+    api_key_info: dict | None = None
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, user_id, api_key_info,
+    )
 
     def _delete_from_store():
         try:
@@ -539,7 +619,7 @@ async def delete_document(request: Request, filename: str):
         except Exception:
             raise HTTPException(status_code=404, detail="No documents have been ingested yet.")
 
-        deleted = store.delete_by_metadata("source_file", filename)
+        deleted = store.delete_by_metadata("source_file", filename, tenant_id=tenant_id)
 
         if deleted == 0:
             raise HTTPException(
@@ -547,7 +627,7 @@ async def delete_document(request: Request, filename: str):
                 detail=f"'{filename}' was not found in the vector store.",
             )
 
-        log.info("Deleted %d chunks for '%s' from vector store", deleted, filename)
+        log.info("Deleted %d chunks for '%s' (tenant=%s)", deleted, filename, tenant_id)
         return deleted
 
     chunks_deleted = await asyncio.to_thread(_delete_from_store)
@@ -558,13 +638,12 @@ async def delete_document(request: Request, filename: str):
         disk_path.unlink()
         log.info("Deleted file from disk: %s", disk_path)
 
-    # Drop cached retriever so the next request rebuilds it without this file.
-    _invalidate_components()
-
     ip = request.client.host if request.client else None
+    org_id = tenant_id if tenant_id != DEFAULT_TENANT else None
     await asyncio.to_thread(
         log_event, None, "DOC_DELETED", ip,
-        {"filename": filename, "chunks_removed": chunks_deleted},
+        {"filename": filename, "chunks_removed": chunks_deleted, "tenant_id": tenant_id},
+        organization_id=org_id,
     )
 
     return {
@@ -668,8 +747,6 @@ async def login(request: Request, req: LoginRequest):
 
     user = await asyncio.to_thread(verify_user, req.username, req.password)
     if not user:
-        # Log the failed attempt — user_id is unknown, so record the username
-        # in details for investigation purposes.
         await asyncio.to_thread(
             log_event, None, "LOGIN_FAILED", ip,
             {"username": req.username},
@@ -678,6 +755,7 @@ async def login(request: Request, req: LoginRequest):
     await asyncio.to_thread(
         log_event, user["id"], "LOGIN_SUCCESS", ip,
         {"username": user["username"]},
+        organization_id=user.get("organization_id"),
     )
     log.info("Login successful | user=%s role=%s", user["username"], user["role"])
     return user
@@ -694,6 +772,7 @@ async def register(request: Request, req: RegisterRequest):
     await asyncio.to_thread(
         log_event, user["id"], "USER_CREATED", ip,
         {"username": user["username"], "role": user["role"]},
+        organization_id=user.get("organization_id"),
     )
     log.info("User registered | user=%s role=%s", user["username"], user["role"])
     return user

@@ -19,23 +19,25 @@ def log_event(
     action: str,
     ip_address: str | None = None,
     details: dict | None = None,
+    organization_id: str | None = None,
 ) -> None:
     """Write a single audit log entry to the database.
 
     Parameters:
-        user_id:    The acting user's ID, or None for anonymous/failed attempts.
-        action:     A short uppercase label (e.g. LOGIN_SUCCESS, DOC_UPLOADED).
-        ip_address: Client IP from the request, if available.
-        details:    Arbitrary metadata stored as a JSON string.
+        user_id:         The acting user's ID, or None for anonymous/failed attempts.
+        action:          A short uppercase label (e.g. LOGIN_SUCCESS, DOC_UPLOADED).
+        ip_address:      Client IP from the request, if available.
+        details:         Arbitrary metadata stored as a JSON string.
+        organization_id: The tenant this event belongs to, for per-org audit trails.
     """
     entry_id = uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
     details_json = json.dumps(details) if details else None
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO audit_log (id, timestamp, user_id, action, ip_address, details) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (entry_id, now, user_id, action, ip_address, details_json),
+            "INSERT INTO audit_log (id, timestamp, user_id, organization_id, action, ip_address, details) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (entry_id, now, user_id, organization_id, action, ip_address, details_json),
         )
 
 
@@ -46,7 +48,7 @@ def get_audit_logs(limit: int = 100) -> list[dict]:
     """
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, timestamp, user_id, action, ip_address, details "
+            "SELECT id, timestamp, user_id, organization_id, action, ip_address, details "
             "FROM audit_log ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         ).fetchall()

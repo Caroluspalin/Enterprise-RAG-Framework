@@ -17,13 +17,14 @@ load_dotenv()
 TOP_K = int(os.getenv("TOP_K", 5))
 
 
-def get_retriever(k: int = TOP_K):
-    """Return a LangChain VectorStoreRetriever from the active vector store.
+def get_retriever(k: int = TOP_K, tenant_id: str = "default"):
+    """Return a LangChain VectorStoreRetriever scoped to a single tenant.
 
-    k controls how many chunks are returned per query. Higher values give the
-    LLM more context but increase token usage and may dilute relevance.
+    k controls how many chunks are returned per query.  tenant_id determines
+    which organisation's documents the retriever can see — this is the
+    critical data-isolation boundary for multi-tenant RAG.
     """
     from vectorstore import get_vector_store
 
     store = get_vector_store()
-    return store.as_langchain_retriever(k=k)
+    return store.as_langchain_retriever(k=k, tenant_id=tenant_id)
