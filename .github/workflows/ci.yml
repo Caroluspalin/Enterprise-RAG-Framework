@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend Tests & Security
+    runs-on: ubuntu-latest
+
+    # Dummy environment variables so module-level imports don't crash
+    # before mocks kick in. None of these touch real services.
+    env:
+      OPENAI_API_KEY: "sk-test-placeholder-not-a-real-key"
+      ANTHROPIC_API_KEY: "test-placeholder"
+      LLM_BACKEND: "openai"
+      COLLECTION_NAME: "b2b_docs"
+      DOCS_PATH: "./docs"
+      CHROMA_PATH: "./chroma_db"
+      CHUNK_SIZE: "1000"
+      CHUNK_OVERLAP: "200"
+      TOP_K: "5"
+      LOG_DIR: "./logs"
+      LOG_LEVEL: "WARNING"
+      CHAT_DB_PATH: ":memory:"
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      WIDGET_API_KEY: ""
+      CHAT_RATE_LIMIT: "100/minute"
+      INTERNAL_ADMIN_SECRET: "ci-dummy-secret"
+      BACKEND_URL: "http://localhost:8000"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-mock pytest-cov httpx bandit
+
+      - name: Security scan (bandit)
+        run: |
+          bandit -r src/ -ll -f json -o bandit-report.json || true
+          # Fail the build only on High-severity issues
+          HIGH_COUNT=$(python -c "
+          import json, sys
+          with open('bandit-report.json') as f:
+              data = json.load(f)
+          high = [r for r in data.get('results', []) if r['issue_severity'] == 'HIGH']
+          print(len(high))
+          ")
+          echo "High-severity issues found: $HIGH_COUNT"
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "::error::Bandit found $HIGH_COUNT HIGH-severity issue(s). Fix them before merging."
+            python -c "
+          import json
+          with open('bandit-report.json') as f:
+              data = json.load(f)
+          for r in data.get('results', []):
+              if r['issue_severity'] == 'HIGH':
+                  print(f\"  - {r['filename']}:{r['line_number']} {r['issue_text']}\")
+          "
+            exit 1
+          fi
+
+      - name: Run tests with coverage
+        run: pytest --cov --cov-report=term-missing --cov-report=xml:coverage.xml -q
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 14
