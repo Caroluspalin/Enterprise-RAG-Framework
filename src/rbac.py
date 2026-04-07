@@ -43,11 +43,25 @@ async def resolve_role(request: Request) -> str | None:
     """Determine the RBAC role for the current request.
 
     Resolution order:
+      0. JWT Bearer token (Authorization: Bearer <signed-jwt>).
       1. API key's role (from X-Widget-Key header).
       2. Authenticated user's role (from user_id query param or JSON body).
       3. None for anonymous requests.
     """
     import asyncio
+
+    # 0. Try JWT Bearer token — browser / API clients using short-lived tokens.
+    #    We try JWT before API keys because JWT carries an explicit role claim
+    #    and does not require a DB lookup.  If decoding fails (invalid, expired,
+    #    or the Bearer value is actually the INTERNAL_ADMIN_SECRET string),
+    #    we fall through to the next resolution step.
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        from jwt_auth import decode_access_token
+        payload = decode_access_token(token)
+        if payload is not None:
+            return payload.get("role")
 
     # 1. Try API key first — widget/external integrations.
     client_key = request.headers.get("X-Widget-Key", "")

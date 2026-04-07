@@ -3,23 +3,36 @@ api.py
 
 FastAPI backend that exposes the RAG pipeline over HTTP.
 
-The terminal chat.py and this API share the same ingest/retriever/chain logic.
-We build a streaming-friendly LCEL chain here instead of using
-ConversationalRetrievalChain because LCEL's .astream() natively yields tokens,
-while the older chain class requires callback hacks to achieve the same effect.
+All public endpoints are versioned under /api/v1/ via an APIRouter.
+This allows breaking changes to be introduced in a future /api/v2/ prefix
+without disrupting existing integrations.
 
-Endpoints:
-  POST /api/chat                    — streaming chat via Server-Sent Events
-  POST /api/upload                  — upload a PDF and trigger incremental ingestion
-  GET  /api/documents               — list unique filenames stored in ChromaDB
-  DELETE /api/documents/{filename}  — remove all embeddings for a file from ChromaDB
-  POST /api/chat/sessions           — create a new chat session
-  GET  /api/chat/sessions           — list sessions for a user
-  GET  /api/chat/sessions/{id}      — get messages for a session
-  DELETE /api/chat/sessions/{id}    — delete a session
+Endpoints (v1):
+  POST   /api/v1/chat                      — streaming chat via SSE
+  POST   /api/v1/upload                    — upload PDF + incremental ingest
+  GET    /api/v1/documents                 — list filenames in the vector store
+  DELETE /api/v1/documents/{filename}      — remove embeddings for a file
+  POST   /api/v1/chat/sessions             — create a new chat session
+  GET    /api/v1/chat/sessions             — list sessions for a user
+  GET    /api/v1/chat/sessions/{id}        — get messages for a session
+  DELETE /api/v1/chat/sessions/{id}        — delete a session
+  POST   /api/v1/auth/login                — verify credentials
+  POST   /api/v1/auth/register             — create account
+  GET    /api/v1/analytics                 — aggregated chat stats
+  GET    /api/v1/admin/users               — list users (admin)
+  DELETE /api/v1/admin/users/{id}          — delete user (admin)
+  POST   /api/v1/admin/users/{id}/change-password
+  POST   /api/v1/admin/api-keys            — create API key (admin)
+  GET    /api/v1/admin/api-keys            — list API keys (admin)
+  DELETE /api/v1/admin/api-keys/{id}       — revoke API key (admin)
+  GET    /api/v1/admin/audit-logs          — audit log (admin)
+  GET    /api/v1/health                    — health check
+  POST   /api/v1/webhooks/stripe           — Stripe webhook receiver
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -27,7 +40,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
@@ -104,6 +117,11 @@ CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "5/minute")
 # one can access admin functionality even if they hit the backend directly.
 INTERNAL_ADMIN_SECRET = os.getenv("INTERNAL_ADMIN_SECRET", "")
 
+# Stripe webhook signing secret — used to validate that webhook events
+# genuinely originate from Stripe and have not been tampered with.
+# Leave empty in development; events are passed through unvalidated.
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +178,14 @@ app.add_middleware(
 # Security headers (X-Content-Type-Options, X-Frame-Options, CSP, HSTS).
 # Must be added AFTER CORSMiddleware so both layers run on every response.
 app.add_middleware(SecurityHeadersMiddleware)
+
+# ---------------------------------------------------------------------------
+# Versioned API router — all endpoints live under /api/v1/.
+# Using an APIRouter lets us add /api/v2/ in the future without touching
+# existing route functions and without breaking existing integrations.
+# ---------------------------------------------------------------------------
+
+v1_router = APIRouter(prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------
@@ -417,8 +443,8 @@ def _apply_rate_limit(key: str, tier: str) -> dict[str, str]:
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.post(
-    "/api/chat",
+@v1_router.post(
+    "/chat",
     dependencies=[Depends(require_role(["owner", "admin", "member"]))],
 )
 async def chat(request: Request, req: ChatRequest):
@@ -445,7 +471,7 @@ async def chat(request: Request, req: ChatRequest):
     # if the organisation has exhausted its monthly quota.
     try:
         await asyncio.to_thread(
-            check_and_track_usage, tenant_id, "/api/chat",
+            check_and_track_usage, tenant_id, "/api/v1/chat",
         )
     except UsageLimitExceeded as exc:
         raise HTTPException(
@@ -476,8 +502,8 @@ async def chat(request: Request, req: ChatRequest):
     )
 
 
-@app.post(
-    "/api/upload",
+@v1_router.post(
+    "/upload",
     dependencies=[Depends(require_role(["owner", "admin"]))],
 )
 async def upload(
@@ -502,7 +528,7 @@ async def upload(
     # Billing gate — reject upload before writing to disk if quota exhausted.
     try:
         await asyncio.to_thread(
-            check_and_track_usage, tenant_id, "/api/upload",
+            check_and_track_usage, tenant_id, "/api/v1/upload",
         )
     except UsageLimitExceeded as exc:
         raise HTTPException(
@@ -590,8 +616,8 @@ def _ingest_pdf(pdf_path: Path, tenant_id: str = DEFAULT_TENANT) -> None:
     log.info("Ingested %s | chunks=%d tenant=%s", pdf_path.name, len(chunks), tenant_id)
 
 
-@app.get(
-    "/api/documents",
+@v1_router.get(
+    "/documents",
     dependencies=[Depends(require_role(["owner", "admin", "member", "viewer"]))],
 )
 async def list_documents(request: Request, user_id: str = "anonymous"):
@@ -634,8 +660,8 @@ async def list_documents(request: Request, user_id: str = "anonymous"):
     return {"documents": documents}
 
 
-@app.delete(
-    "/api/documents/{filename}",
+@v1_router.delete(
+    "/documents/{filename}",
     dependencies=[Depends(require_role(["owner", "admin"]))],
 )
 async def delete_document(request: Request, filename: str, user_id: str = "anonymous"):
@@ -700,7 +726,7 @@ class CreateSessionRequest(BaseModel):
     title: str = "New chat"
 
 
-@app.post("/api/chat/sessions")
+@v1_router.post("/chat/sessions")
 async def create_chat_session(req: CreateSessionRequest):
     """Create a new chat session and return it."""
     session = await asyncio.to_thread(create_session, req.user_id, req.title)
@@ -708,14 +734,14 @@ async def create_chat_session(req: CreateSessionRequest):
     return session
 
 
-@app.get("/api/chat/sessions")
+@v1_router.get("/chat/sessions")
 async def list_chat_sessions(user_id: str = "anonymous"):
     """Return all sessions for a user, most recent first."""
     sessions = await asyncio.to_thread(get_sessions, user_id)
     return {"sessions": sessions}
 
 
-@app.get("/api/chat/sessions/{session_id}")
+@v1_router.get("/chat/sessions/{session_id}")
 async def get_chat_session(session_id: str):
     """Return a session's metadata and all its messages."""
     session = await asyncio.to_thread(get_session, session_id)
@@ -725,7 +751,7 @@ async def get_chat_session(session_id: str):
     return {"session": session, "messages": messages}
 
 
-@app.delete("/api/chat/sessions/{session_id}")
+@v1_router.delete("/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str):
     """Delete a session and all its messages."""
     session = await asyncio.to_thread(get_session, session_id)
@@ -758,7 +784,7 @@ _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW_SECONDS = 300
 
 
-@app.post("/api/auth/login")
+@v1_router.post("/auth/login")
 async def login(request: Request, req: LoginRequest):
     """Verify credentials and return user info (without password hash).
 
@@ -800,7 +826,7 @@ async def login(request: Request, req: LoginRequest):
     return user
 
 
-@app.post("/api/auth/register")
+@v1_router.post("/auth/register")
 async def register(request: Request, req: RegisterRequest):
     """Create a new user account with a bcrypt-hashed password."""
     existing = await asyncio.to_thread(get_user_by_username, req.username)
@@ -821,7 +847,7 @@ async def register(request: Request, req: RegisterRequest):
 # Analytics endpoint
 # ---------------------------------------------------------------------------
 
-@app.get("/api/analytics")
+@v1_router.get("/analytics")
 async def analytics(days: int = 30):
     """Return aggregated chat analytics for the admin dashboard."""
     data = await asyncio.to_thread(get_analytics, days)
@@ -859,7 +885,7 @@ def _require_admin(request: Request) -> None:
 # Admin — User management
 # ---------------------------------------------------------------------------
 
-@app.get("/api/admin/users")
+@v1_router.get("/admin/users")
 async def admin_list_users(request: Request):
     """List all registered users (admin only)."""
     _require_admin(request)
@@ -867,7 +893,7 @@ async def admin_list_users(request: Request):
     return {"users": users}
 
 
-@app.delete("/api/admin/users/{user_id}")
+@v1_router.delete("/admin/users/{user_id}")
 async def admin_delete_user(request: Request, user_id: str):
     """Delete a user and all their API keys (admin only)."""
     _require_admin(request)
@@ -888,7 +914,7 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
-@app.post("/api/admin/users/{user_id}/change-password")
+@v1_router.post("/admin/users/{user_id}/change-password")
 async def admin_change_password(request: Request, user_id: str, req: ChangePasswordRequest):
     """Change a user's password (admin only, requires old password)."""
     _require_admin(request)
@@ -914,7 +940,7 @@ class CreateApiKeyRequest(BaseModel):
     label: str
 
 
-@app.post("/api/admin/api-keys")
+@v1_router.post("/admin/api-keys")
 async def admin_create_api_key(request: Request, req: CreateApiKeyRequest):
     """Generate a new API key for a user (admin only).
 
@@ -932,7 +958,7 @@ async def admin_create_api_key(request: Request, req: CreateApiKeyRequest):
     return result
 
 
-@app.get("/api/admin/api-keys")
+@v1_router.get("/admin/api-keys")
 async def admin_list_api_keys(request: Request, user_id: str):
     """List all API keys for a user (admin only).  No secrets returned."""
     _require_admin(request)
@@ -940,7 +966,7 @@ async def admin_list_api_keys(request: Request, user_id: str):
     return {"api_keys": keys}
 
 
-@app.delete("/api/admin/api-keys/{key_id}")
+@v1_router.delete("/admin/api-keys/{key_id}")
 async def admin_revoke_api_key(request: Request, key_id: str):
     """Revoke (deactivate) an API key (admin only)."""
     _require_admin(request)
@@ -960,7 +986,7 @@ async def admin_revoke_api_key(request: Request, key_id: str):
 # Admin — Audit log
 # ---------------------------------------------------------------------------
 
-@app.get("/api/admin/audit-logs")
+@v1_router.get("/admin/audit-logs")
 async def admin_get_audit_logs(request: Request, limit: int = 100):
     """Return the most recent audit log entries (admin only)."""
     _require_admin(request)
@@ -968,6 +994,78 @@ async def admin_get_audit_logs(request: Request, limit: int = 100):
     return {"audit_logs": logs}
 
 
-@app.get("/api/health")
+@v1_router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Webhooks
+# ---------------------------------------------------------------------------
+
+@v1_router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    """Validate a Stripe webhook event and return HTTP 200.
+
+    Stripe signs every webhook request with HMAC-SHA256 using the
+    STRIPE_WEBHOOK_SECRET.  The Stripe-Signature header format is:
+
+        t=<unix_timestamp>,v1=<hex_digest>[,v0=<legacy_digest>]
+
+    We recompute the expected signature and compare using a constant-time
+    function to prevent timing attacks.
+
+    Full event processing (subscription changes, payment confirmations) will
+    be wired in a future phase.  For now we only verify and acknowledge.
+    """
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    if not STRIPE_WEBHOOK_SECRET:
+        log.warning(
+            "STRIPE_WEBHOOK_SECRET not configured — skipping signature validation"
+        )
+        return {"received": True}
+
+    # Parse t= and v1= values from the comma-delimited header.
+    sig_parts: dict[str, str] = {}
+    for part in sig_header.split(","):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            sig_parts[k.strip()] = v.strip()
+
+    timestamp = sig_parts.get("t", "")
+    v1_sig = sig_parts.get("v1", "")
+
+    if not timestamp or not v1_sig:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing or malformed Stripe-Signature header.",
+        )
+
+    # Stripe signs the raw payload bytes as UTF-8.
+    try:
+        payload_str = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Non-UTF-8 webhook payload.")
+
+    signed_payload = f"{timestamp}.{payload_str}"
+    expected = hmac.new(
+        STRIPE_WEBHOOK_SECRET.encode("utf-8"),
+        signed_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, v1_sig):
+        log.warning("Stripe webhook signature mismatch — possible spoofed request")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+
+    log.info("Stripe webhook received and validated (t=%s)", timestamp)
+    return {"received": True}
+
+
+# ---------------------------------------------------------------------------
+# Mount the versioned router on the app — must come after all route definitions.
+# ---------------------------------------------------------------------------
+
+app.include_router(v1_router)

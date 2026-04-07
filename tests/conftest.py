@@ -172,3 +172,23 @@ def chat_client(monkeypatch):
         from limiter import rate_limiter
         rate_limiter.reset()
         yield TestClient(api_module.app)
+
+
+# ---------------------------------------------------------------------------
+# JWT helpers
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def make_jwt():
+    """Return a callable that creates a valid JWT access token for tests.
+
+    Usage:
+        token = make_jwt("some-user-id", "member")
+        resp = client.post("/api/v1/chat", ..., headers={"Authorization": f"Bearer {token}"})
+    """
+    from jwt_auth import make_access_token
+
+    def _factory(user_id: str, role: str, exp_seconds: int = 3600) -> str:
+        return make_access_token(user_id, role, exp_seconds=exp_seconds)
+
+    return _factory

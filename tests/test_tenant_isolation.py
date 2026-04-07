@@ -139,7 +139,7 @@ class TestDocumentListIsolation:
         _seed_docs(store, mock_embed, org_b_id, ["beta.pdf"])
 
         resp = client.get(
-            "/api/documents",
+            "/api/v1/documents",
             params={"user_id": tenants["user_a"]["id"]},
         )
         assert resp.status_code == 200
@@ -156,7 +156,7 @@ class TestDocumentListIsolation:
         _seed_docs(store, mock_embed, org_b_id, ["beta.pdf"])
 
         resp = client.get(
-            "/api/documents",
+            "/api/v1/documents",
             params={"user_id": tenants["user_b"]["id"]},
         )
         assert resp.status_code == 200
@@ -175,7 +175,7 @@ class TestDocumentListIsolation:
         _seed_docs(store, mock_embed, org_a_id, ["secret.pdf"])
         _seed_docs(store, mock_embed, "default", ["public.pdf"])
 
-        resp = client.get("/api/documents", params={"user_id": orgless["id"]})
+        resp = client.get("/api/v1/documents", params={"user_id": orgless["id"]})
         names = [d["name"] for d in resp.json()["documents"]]
         assert "public.pdf" in names
         assert "secret.pdf" not in names
@@ -198,7 +198,7 @@ class TestDocumentDeleteIsolation:
 
         # Tenant A tries to delete Tenant B's document.
         resp = client.delete(
-            "/api/documents/only_b.pdf",
+            "/api/v1/documents/only_b.pdf",
             params={"user_id": tenants["user_a"]["id"]},
         )
         assert resp.status_code == 404
@@ -213,7 +213,7 @@ class TestDocumentDeleteIsolation:
         _seed_docs(store, mock_embed, org_a_id, ["mine.pdf"])
 
         resp = client.delete(
-            "/api/documents/mine.pdf",
+            "/api/v1/documents/mine.pdf",
             params={"user_id": tenants["user_a"]["id"]},
         )
         assert resp.status_code == 200
@@ -230,7 +230,7 @@ class TestDocumentDeleteIsolation:
         _seed_docs(store, mock_embed, org_b_id, ["report.pdf"])
 
         resp = client.delete(
-            "/api/documents/report.pdf",
+            "/api/v1/documents/report.pdf",
             params={"user_id": tenants["user_a"]["id"]},
         )
         assert resp.status_code == 200
@@ -259,7 +259,7 @@ class TestTenantResolutionViaApiKey:
         _seed_docs(store, mock_embed, org_b_id, ["b_doc.pdf"])
 
         resp = client.get(
-            "/api/documents",
+            "/api/v1/documents",
             headers={"X-Widget-Key": key_data["raw_key"]},
         )
         assert resp.status_code == 200
@@ -298,7 +298,7 @@ class TestChatTenantIsolation:
         mock_oai.embed_query = lambda q: _fake_embed([q])[0]
 
         with patch("langchain_openai.OpenAIEmbeddings", return_value=mock_oai):
-            resp = client.post("/api/chat", json={
+            resp = client.post("/api/v1/chat", json={
                 "question": "Tell me about the guide",
                 "user_id": tenants["user_a"]["id"],
             })
@@ -322,7 +322,7 @@ class TestAuditOrgId:
         client, store, mock_embed, tenants = tenant_client
         from audit import get_audit_logs
 
-        resp = client.post("/api/auth/login", json={
+        resp = client.post("/api/v1/auth/login", json={
             "username": "alice", "password": "password1",
         })
         assert resp.status_code == 200

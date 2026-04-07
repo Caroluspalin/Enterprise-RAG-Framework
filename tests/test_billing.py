@@ -66,16 +66,16 @@ class TestCheckAndTrackUsage:
 
     def test_increments_counter_on_success(self):
         org = _create_org_with_plan("free")
-        check_and_track_usage(org["id"], "/api/chat")
+        check_and_track_usage(org["id"], "/api/v1/chat")
         updated = db.get_organization(org["id"])
         assert updated["api_calls_count"] == 1
 
     def test_writes_usage_log(self):
         org = _create_org_with_plan("free")
-        check_and_track_usage(org["id"], "/api/chat", tokens=42)
+        check_and_track_usage(org["id"], "/api/v1/chat", tokens=42)
         logs = db.get_usage_logs(org["id"])
         assert len(logs) == 1
-        assert logs[0]["endpoint"] == "/api/chat"
+        assert logs[0]["endpoint"] == "/api/v1/chat"
         assert logs[0]["tokens_used"] == 42
 
     def test_free_plan_allows_100_calls(self):
@@ -83,7 +83,7 @@ class TestCheckAndTrackUsage:
         org = _create_org_with_plan("free")
         _exhaust_quota(org["id"], 99)
         # This is call #100 — still within the limit.
-        check_and_track_usage(org["id"], "/api/chat")
+        check_and_track_usage(org["id"], "/api/v1/chat")
         updated = db.get_organization(org["id"])
         assert updated["api_calls_count"] == 100
 
@@ -92,7 +92,7 @@ class TestCheckAndTrackUsage:
         org = _create_org_with_plan("free")
         _exhaust_quota(org["id"], 100)
         with pytest.raises(UsageLimitExceeded) as exc_info:
-            check_and_track_usage(org["id"], "/api/chat")
+            check_and_track_usage(org["id"], "/api/v1/chat")
         assert exc_info.value.plan == "free"
         assert exc_info.value.limit == 100
         assert exc_info.value.current == 100
@@ -101,7 +101,7 @@ class TestCheckAndTrackUsage:
         org = _create_org_with_plan("pro")
         _exhaust_quota(org["id"], 10_000)
         with pytest.raises(UsageLimitExceeded) as exc_info:
-            check_and_track_usage(org["id"], "/api/chat")
+            check_and_track_usage(org["id"], "/api/v1/chat")
         assert exc_info.value.plan == "pro"
         assert exc_info.value.limit == 10_000
 
@@ -110,19 +110,19 @@ class TestCheckAndTrackUsage:
         org = _create_org_with_plan("enterprise")
         _exhaust_quota(org["id"], 999_999)
         # Should NOT raise.
-        check_and_track_usage(org["id"], "/api/chat")
+        check_and_track_usage(org["id"], "/api/v1/chat")
         updated = db.get_organization(org["id"])
         assert updated["api_calls_count"] == 1_000_000
 
     def test_nonexistent_org_gets_pass(self):
         """DEFAULT_TENANT or unknown org_id should not crash."""
-        check_and_track_usage("nonexistent-org-id", "/api/chat")
+        check_and_track_usage("nonexistent-org-id", "/api/v1/chat")
         # No exception, no crash — the function silently skips.
 
     def test_multiple_calls_increment_sequentially(self):
         org = _create_org_with_plan("free")
         for _ in range(5):
-            check_and_track_usage(org["id"], "/api/chat")
+            check_and_track_usage(org["id"], "/api/v1/chat")
         updated = db.get_organization(org["id"])
         assert updated["api_calls_count"] == 5
         logs = db.get_usage_logs(org["id"])
@@ -130,11 +130,11 @@ class TestCheckAndTrackUsage:
 
     def test_usage_log_records_different_endpoints(self):
         org = _create_org_with_plan("pro")
-        check_and_track_usage(org["id"], "/api/chat", tokens=10)
-        check_and_track_usage(org["id"], "/api/upload", tokens=0)
+        check_and_track_usage(org["id"], "/api/v1/chat", tokens=10)
+        check_and_track_usage(org["id"], "/api/v1/upload", tokens=0)
         logs = db.get_usage_logs(org["id"])
         endpoints = {log["endpoint"] for log in logs}
-        assert endpoints == {"/api/chat", "/api/upload"}
+        assert endpoints == {"/api/v1/chat", "/api/v1/upload"}
 
 
 # ---------------------------------------------------------------------------
@@ -175,15 +175,15 @@ class TestDbBillingHelpers:
 
     def test_add_usage_log(self):
         org = _create_org_with_plan("free")
-        log_entry = db.add_usage_log(org["id"], "/api/chat", tokens_used=123)
+        log_entry = db.add_usage_log(org["id"], "/api/v1/chat", tokens_used=123)
         assert log_entry["organization_id"] == org["id"]
         assert log_entry["tokens_used"] == 123
-        assert log_entry["endpoint"] == "/api/chat"
+        assert log_entry["endpoint"] == "/api/v1/chat"
 
     def test_get_usage_logs_ordered_by_timestamp(self):
         org = _create_org_with_plan("free")
-        db.add_usage_log(org["id"], "/api/chat", tokens_used=10)
-        db.add_usage_log(org["id"], "/api/upload", tokens_used=20)
+        db.add_usage_log(org["id"], "/api/v1/chat", tokens_used=10)
+        db.add_usage_log(org["id"], "/api/v1/upload", tokens_used=20)
         logs = db.get_usage_logs(org["id"])
         # Newest first.
         assert logs[0]["tokens_used"] == 20
@@ -192,7 +192,7 @@ class TestDbBillingHelpers:
     def test_get_usage_logs_limit(self):
         org = _create_org_with_plan("free")
         for i in range(10):
-            db.add_usage_log(org["id"], "/api/chat", tokens_used=i)
+            db.add_usage_log(org["id"], "/api/v1/chat", tokens_used=i)
         logs = db.get_usage_logs(org["id"], limit=3)
         assert len(logs) == 3
 
@@ -225,7 +225,7 @@ class TestBillingGateChat:
             )
         _exhaust_quota(org["id"], 100)
 
-        resp = chat_client.post("/api/chat", json={
+        resp = chat_client.post("/api/v1/chat", json={
             "question": "test question",
             "user_id": admin["id"],
         })
@@ -242,7 +242,7 @@ class TestBillingGateChat:
             )
         _exhaust_quota(org["id"], 50)
 
-        resp = chat_client.post("/api/chat", json={
+        resp = chat_client.post("/api/v1/chat", json={
             "question": "test question",
             "user_id": admin["id"],
         })
@@ -258,7 +258,7 @@ class TestBillingGateChat:
             )
         _exhaust_quota(org["id"], 10_000)
 
-        resp = chat_client.post("/api/chat", json={
+        resp = chat_client.post("/api/v1/chat", json={
             "question": "test",
             "user_id": admin["id"],
         })
@@ -275,7 +275,7 @@ class TestBillingGateChat:
             )
         _exhaust_quota(org["id"], 999_999)
 
-        resp = chat_client.post("/api/chat", json={
+        resp = chat_client.post("/api/v1/chat", json={
             "question": "enterprise question",
             "user_id": admin["id"],
         })
@@ -299,7 +299,7 @@ class TestBillingGateUpload:
         with patch("api._resolve_tenant_id", return_value=org["id"]):
             admin = db.get_user_by_username("admin")
             resp = client.post(
-                "/api/upload",
+                "/api/v1/upload",
                 data={"user_id": admin["id"]},
                 files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
             )
@@ -315,7 +315,7 @@ class TestBillingGateUpload:
              patch("api._ingest_pdf"):
             admin = db.get_user_by_username("admin")
             resp = client.post(
-                "/api/upload",
+                "/api/v1/upload",
                 data={"user_id": admin["id"]},
                 files={"file": ("test.pdf", b"%PDF-1.4 fake", "application/pdf")},
             )

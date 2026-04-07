@@ -5,7 +5,7 @@ import db
 
 class TestLogin:
     def test_login_default_admin(self, client):
-        resp = client.post("/api/auth/login", json={
+        resp = client.post("/api/v1/auth/login", json={
             "username": "admin",
             "password": "admin123",
         })
@@ -16,14 +16,14 @@ class TestLogin:
         assert "password_hash" not in data
 
     def test_login_wrong_password(self, client):
-        resp = client.post("/api/auth/login", json={
+        resp = client.post("/api/v1/auth/login", json={
             "username": "admin",
             "password": "wrong",
         })
         assert resp.status_code == 401
 
     def test_login_nonexistent_user(self, client):
-        resp = client.post("/api/auth/login", json={
+        resp = client.post("/api/v1/auth/login", json={
             "username": "ghost",
             "password": "anything",
         })
@@ -32,7 +32,7 @@ class TestLogin:
 
 class TestRegister:
     def test_register_new_user(self, client):
-        resp = client.post("/api/auth/register", json={
+        resp = client.post("/api/v1/auth/register", json={
             "username": "newuser",
             "password": "securepass",
             "name": "New User",
@@ -43,7 +43,7 @@ class TestRegister:
         assert data["role"] == "member"
 
     def test_register_duplicate_username(self, client):
-        resp = client.post("/api/auth/register", json={
+        resp = client.post("/api/v1/auth/register", json={
             "username": "admin",
             "password": "whatever",
             "name": "Duplicate",

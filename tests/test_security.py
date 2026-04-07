@@ -20,7 +20,7 @@ class TestSecurityHeaders:
     """Every response should include the standard security headers."""
 
     def test_health_has_security_headers(self, client):
-        resp = client.get("/api/health")
+        resp = client.get("/api/v1/health")
         assert resp.status_code == 200
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
         assert resp.headers["X-Frame-Options"] == "DENY"
@@ -29,21 +29,21 @@ class TestSecurityHeaders:
         assert "camera=()" in resp.headers["Permissions-Policy"]
 
     def test_json_endpoint_has_security_headers(self, client):
-        resp = client.get("/api/chat/sessions?user_id=nobody")
+        resp = client.get("/api/v1/chat/sessions?user_id=nobody")
         assert resp.status_code == 200
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
         assert resp.headers["X-Frame-Options"] == "DENY"
 
     def test_hsts_absent_in_development(self, client):
         """HSTS should NOT be set in development (default)."""
-        resp = client.get("/api/health")
+        resp = client.get("/api/v1/health")
         assert "Strict-Transport-Security" not in resp.headers
 
     def test_hsts_present_in_production(self, client, monkeypatch):
         """HSTS should be set when ENVIRONMENT=production."""
         import security
         monkeypatch.setattr(security, "_ENVIRONMENT", "production")
-        resp = client.get("/api/health")
+        resp = client.get("/api/v1/health")
         assert "max-age=" in resp.headers.get("Strict-Transport-Security", "")
 
 
@@ -56,12 +56,12 @@ class TestLoginRateLimit:
         """After 5 failed logins from the same IP, the 6th should be 429."""
         rate_limiter.reset()
         for _ in range(5):
-            resp = client.post("/api/auth/login", json={
+            resp = client.post("/api/v1/auth/login", json={
                 "username": "admin", "password": "wrong",
             })
             assert resp.status_code == 401
 
-        resp = client.post("/api/auth/login", json={
+        resp = client.post("/api/v1/auth/login", json={
             "username": "admin", "password": "wrong",
         })
         assert resp.status_code == 429
@@ -71,10 +71,10 @@ class TestLoginRateLimit:
         """Successful logins consume the rate limit too, preventing enumeration."""
         rate_limiter.reset()
         for _ in range(5):
-            client.post("/api/auth/login", json={
+            client.post("/api/v1/auth/login", json={
                 "username": "admin", "password": "admin123",
             })
-        resp = client.post("/api/auth/login", json={
+        resp = client.post("/api/v1/auth/login", json={
             "username": "admin", "password": "admin123",
         })
         assert resp.status_code == 429
@@ -97,7 +97,7 @@ class TestGlobalExceptionHandler:
 
         monkeypatch.setattr(api_module, "get_analytics", _boom)
 
-        resp = client.get("/api/analytics")
+        resp = client.get("/api/v1/analytics")
         assert resp.status_code == 500
         body = resp.json()
         assert body["detail"] == "Internal server error."

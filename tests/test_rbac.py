@@ -92,26 +92,26 @@ def rbac_client(monkeypatch):
 class TestChatRBAC:
     def test_owner_can_chat(self, rbac_client):
         user = _make_user("owner")
-        resp = rbac_client.post("/api/chat", json={"question": "Hi", "user_id": user["id"]})
+        resp = rbac_client.post("/api/v1/chat", json={"question": "Hi", "user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_admin_can_chat(self, rbac_client):
         user = _make_user("admin")
-        resp = rbac_client.post("/api/chat", json={"question": "Hi", "user_id": user["id"]})
+        resp = rbac_client.post("/api/v1/chat", json={"question": "Hi", "user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_member_can_chat(self, rbac_client):
         user = _make_user("member")
-        resp = rbac_client.post("/api/chat", json={"question": "Hi", "user_id": user["id"]})
+        resp = rbac_client.post("/api/v1/chat", json={"question": "Hi", "user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_viewer_cannot_chat(self, rbac_client):
         user = _make_user("viewer")
-        resp = rbac_client.post("/api/chat", json={"question": "Hi", "user_id": user["id"]})
+        resp = rbac_client.post("/api/v1/chat", json={"question": "Hi", "user_id": user["id"]})
         assert resp.status_code == 403
 
     def test_anonymous_cannot_chat(self, rbac_client):
-        resp = rbac_client.post("/api/chat", json={"question": "Hi"})
+        resp = rbac_client.post("/api/v1/chat", json={"question": "Hi"})
         assert resp.status_code == 403
 
 
@@ -122,26 +122,26 @@ class TestChatRBAC:
 class TestDocumentListRBAC:
     def test_owner_can_list(self, rbac_client):
         user = _make_user("owner")
-        resp = rbac_client.get("/api/documents", params={"user_id": user["id"]})
+        resp = rbac_client.get("/api/v1/documents", params={"user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_admin_can_list(self, rbac_client):
         user = _make_user("admin")
-        resp = rbac_client.get("/api/documents", params={"user_id": user["id"]})
+        resp = rbac_client.get("/api/v1/documents", params={"user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_member_can_list(self, rbac_client):
         user = _make_user("member")
-        resp = rbac_client.get("/api/documents", params={"user_id": user["id"]})
+        resp = rbac_client.get("/api/v1/documents", params={"user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_viewer_can_list(self, rbac_client):
         user = _make_user("viewer")
-        resp = rbac_client.get("/api/documents", params={"user_id": user["id"]})
+        resp = rbac_client.get("/api/v1/documents", params={"user_id": user["id"]})
         assert resp.status_code == 200
 
     def test_anonymous_cannot_list(self, rbac_client):
-        resp = rbac_client.get("/api/documents")
+        resp = rbac_client.get("/api/v1/documents")
         assert resp.status_code == 403
 
 
@@ -152,30 +152,30 @@ class TestDocumentListRBAC:
 class TestDocumentDeleteRBAC:
     def test_member_cannot_delete_document(self, rbac_client):
         user = _make_user("member")
-        resp = rbac_client.delete("/api/documents/test.pdf", params={"user_id": user["id"]})
+        resp = rbac_client.delete("/api/v1/documents/test.pdf", params={"user_id": user["id"]})
         assert resp.status_code == 403
 
     def test_viewer_cannot_delete_document(self, rbac_client):
         user = _make_user("viewer")
-        resp = rbac_client.delete("/api/documents/test.pdf", params={"user_id": user["id"]})
+        resp = rbac_client.delete("/api/v1/documents/test.pdf", params={"user_id": user["id"]})
         assert resp.status_code == 403
 
     def test_admin_can_delete_document(self, rbac_client):
         """Admin is allowed by RBAC (the 404 comes from missing file, not access)."""
         user = _make_user("admin")
-        resp = rbac_client.delete("/api/documents/nonexistent.pdf", params={"user_id": user["id"]})
+        resp = rbac_client.delete("/api/v1/documents/nonexistent.pdf", params={"user_id": user["id"]})
         # 404 means RBAC passed but the file doesn't exist — which is correct.
         assert resp.status_code in (200, 404)
         assert resp.status_code != 403
 
     def test_owner_can_delete_document(self, rbac_client):
         user = _make_user("owner")
-        resp = rbac_client.delete("/api/documents/nonexistent.pdf", params={"user_id": user["id"]})
+        resp = rbac_client.delete("/api/v1/documents/nonexistent.pdf", params={"user_id": user["id"]})
         assert resp.status_code in (200, 404)
         assert resp.status_code != 403
 
     def test_anonymous_cannot_delete_document(self, rbac_client):
-        resp = rbac_client.delete("/api/documents/test.pdf")
+        resp = rbac_client.delete("/api/v1/documents/test.pdf")
         assert resp.status_code == 403
 
 
@@ -188,7 +188,7 @@ class TestUploadRBAC:
         user = _make_user("member")
         key = db.create_api_key(user["id"], "member-upload", role="member")
         resp = rbac_client.post(
-            "/api/upload",
+            "/api/v1/upload",
             files={"file": ("test.pdf", b"%PDF-1.4 test content", "application/pdf")},
             headers={"X-Widget-Key": key["raw_key"]},
         )
@@ -198,7 +198,7 @@ class TestUploadRBAC:
         user = _make_user("viewer")
         key = db.create_api_key(user["id"], "viewer-upload", role="viewer")
         resp = rbac_client.post(
-            "/api/upload",
+            "/api/v1/upload",
             files={"file": ("test.pdf", b"%PDF-1.4 test content", "application/pdf")},
             headers={"X-Widget-Key": key["raw_key"]},
         )
@@ -206,7 +206,7 @@ class TestUploadRBAC:
 
     def test_anonymous_cannot_upload(self, rbac_client):
         resp = rbac_client.post(
-            "/api/upload",
+            "/api/v1/upload",
             files={"file": ("test.pdf", b"%PDF-1.4 test content", "application/pdf")},
         )
         assert resp.status_code == 403
@@ -221,7 +221,7 @@ class TestApiKeyRBAC:
         user = _make_user("admin")
         key = db.create_api_key(user["id"], "member-key", role="member")
         resp = rbac_client.post(
-            "/api/chat",
+            "/api/v1/chat",
             json={"question": "Hi"},
             headers={"X-Widget-Key": key["raw_key"]},
         )
@@ -231,7 +231,7 @@ class TestApiKeyRBAC:
         user = _make_user("admin")
         key = db.create_api_key(user["id"], "viewer-key", role="viewer")
         resp = rbac_client.post(
-            "/api/chat",
+            "/api/v1/chat",
             json={"question": "Hi"},
             headers={"X-Widget-Key": key["raw_key"]},
         )
@@ -241,7 +241,7 @@ class TestApiKeyRBAC:
         user = _make_user("admin")
         key = db.create_api_key(user["id"], "admin-key", role="admin")
         resp = rbac_client.delete(
-            "/api/documents/nonexistent.pdf",
+            "/api/v1/documents/nonexistent.pdf",
             headers={"X-Widget-Key": key["raw_key"]},
         )
         # 404 means RBAC passed — file doesn't exist.
@@ -251,7 +251,7 @@ class TestApiKeyRBAC:
         user = _make_user("admin")
         key = db.create_api_key(user["id"], "member-key", role="member")
         resp = rbac_client.delete(
-            "/api/documents/test.pdf",
+            "/api/v1/documents/test.pdf",
             headers={"X-Widget-Key": key["raw_key"]},
         )
         assert resp.status_code == 403
@@ -260,7 +260,7 @@ class TestApiKeyRBAC:
         user = _make_user("admin")
         key = db.create_api_key(user["id"], "viewer-key", role="viewer")
         resp = rbac_client.get(
-            "/api/documents",
+            "/api/v1/documents",
             headers={"X-Widget-Key": key["raw_key"]},
         )
         assert resp.status_code == 200

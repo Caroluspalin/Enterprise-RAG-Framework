@@ -90,7 +90,7 @@ class TestRateLimitIntegration:
         return db.get_user_by_username("admin")["id"]
 
     def test_chat_returns_rate_limit_headers(self, chat_client):
-        resp = chat_client.post("/api/chat", json={"question": "Hi", "user_id": self._admin_id()})
+        resp = chat_client.post("/api/v1/chat", json={"question": "Hi", "user_id": self._admin_id()})
         assert resp.status_code == 200
         assert "X-RateLimit-Limit" in resp.headers
         assert "X-RateLimit-Remaining" in resp.headers
@@ -105,9 +105,9 @@ class TestRateLimitIntegration:
         member = db.create_user("ratelimited", "pass", "RL User", role="member")
         limit = TIER_LIMITS["FREE_USER"]
         for _ in range(limit):
-            resp = chat_client.post("/api/chat", json={"question": "Hi", "user_id": member["id"]})
+            resp = chat_client.post("/api/v1/chat", json={"question": "Hi", "user_id": member["id"]})
             assert resp.status_code == 200
 
-        resp = chat_client.post("/api/chat", json={"question": "One too many", "user_id": member["id"]})
+        resp = chat_client.post("/api/v1/chat", json={"question": "One too many", "user_id": member["id"]})
         assert resp.status_code == 429
         assert "Rate limit" in resp.json()["detail"]
