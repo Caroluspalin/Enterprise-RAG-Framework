@@ -121,6 +121,10 @@
 **CI/CD-pipeline (GitHub Actions)**
 - [x] Luo `.github/workflows/ci.yml`: käynnistyy `push`- ja `pull_request`-eventeillä
 - [x] Backend-vaihe: Python-setup, `pip install`, `pytest --cov` — pipeline feilaa jos testit eivät mene läpi
+- [x] Tietoturvaskannaus: Bandit (`bandit -r src/`) — feilaa buildin High-tason haavoittuvuuksista
+- [x] Dummy-ympäristömuuttujat CI:lle — testit toimivat ilman oikeita API-avaimia
+- [x] Coverage- ja Bandit-raportit GitHub-artifakteina (14 pv retention)
+- [x] Import-sivuvaikutuksen korjaus: `db.py` ei enää aja `init_db()` importissa — siirretty FastAPI lifespan-eventiin
 - [ ] Frontend-vaihe: Node-setup, `npm ci`, `npm run lint`, `vitest run`, `npm run build` — pipeline feilaa jos buildi ei onnistu
 - [ ] E2E-vaihe: Playwright-testit headless-chromella (ajetaan vain `main`-branchissa tai PR-mergessä)
 - [ ] Branch protection -sääntö: `main`-branchiin ei voi pushata ilman vihreää CI-statusta

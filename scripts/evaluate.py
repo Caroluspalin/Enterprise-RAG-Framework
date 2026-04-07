@@ -48,40 +48,41 @@ from retriever import get_retriever
 
 GOLDEN_DATASET = [
     {
-        "question": "What is the purpose of this company's product?",
+        "question": "Mikä on TechCorp Solutions Oy:n kriittisen vian (Taso 1) vasteaika ja korjaustavoite?",
         "ground_truth": (
-            "The product is a RAG-based chatbot that ingests PDF documents "
-            "and answers questions about them using retrieval-augmented generation."
+            "Taso 1 (Kriittinen vika) tarkoittaa, että koko tuotantojärjestelmä on alhaalla. "
+            "Vasteaika on 15 minuuttia ja korjaustavoite on 2 tuntia."
         ),
     },
     {
-        "question": "How does the system prevent hallucinations?",
+        "question": "Kuinka suuri laitebudjetti TechCorpin kokoaikaisella työntekijällä on ja mihin sen voi käyttää?",
         "ground_truth": (
-            "The system prompt instructs the LLM to answer ONLY from the "
-            "provided context and to explicitly say it does not know if the "
-            "context is insufficient."
+            "Jokaisella kokoaikaisella työntekijällä on oikeus 1500 euron laitebudjettiin "
+            "kahden vuoden välein. Budjetin voi käyttää kannettavaan tietokoneeseen, "
+            "näyttöihin tai ergonomiseen työtuoliin."
         ),
     },
     {
-        "question": "What embedding model is used for document indexing?",
+        "question": "Mikä on B2B-asiakkaiden palautusoikeus virheelliselle palvelinlaitteistolle?",
         "ground_truth": (
-            "The system uses OpenAI's text-embedding-3-small model to generate "
-            "vector embeddings for document chunks."
+            "Jos toimitettu palvelinlaitteisto on virheellinen, asiakkaalla on "
+            "14 vuorokauden palautusoikeus laitteen vastaanottamisesta. Palautettavan "
+            "laitteen tulee olla alkuperäisessä pakkauksessa. Aiheettomista palautuksista "
+            "peritään 15 % käsittelykulun laitteen ostohinnasta."
         ),
     },
     {
-        "question": "How are duplicate documents handled during ingestion?",
+        "question": "Missä TechCorp Solutions Oy:n pääkonttori sijaitsee ja kuka on toimitusjohtaja?",
         "ground_truth": (
-            "A SHA-256 content hash is computed for each PDF file. Files whose "
-            "hash already exists in the vector store are skipped to avoid "
-            "re-embedding unchanged documents."
+            "TechCorpin pääkonttori sijaitsee osoitteessa Tekniikantie 1, 02150 Espoo. "
+            "Toimitusjohtaja on Matti 'Masa' Meikäläinen."
         ),
     },
     {
-        "question": "What vector database does the system use?",
+        "question": "Millainen on TechCorpin hybridityömalli ja kuinka monta päivää viikossa toimistolla on oltava?",
         "ground_truth": (
-            "The system uses ChromaDB as its vector database, persisted locally "
-            "to the chroma_db/ directory."
+            "TechCorp noudattaa joustavaa hybridityömallia: toimistolla on oltava "
+            "vähintään kaksi päivää viikossa, loput kolme päivää voi työskennellä etänä."
         ),
     },
 ]
@@ -129,6 +130,8 @@ def _evaluate_with_ragas(results: list[dict]) -> None:
     try:
         from ragas import evaluate
         from ragas.metrics import faithfulness, answer_relevancy
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.embeddings import LangchainEmbeddingsWrapper
         from datasets import Dataset
     except ImportError:
         print(
@@ -136,6 +139,17 @@ def _evaluate_with_ragas(results: list[dict]) -> None:
             "  pip install ragas\n"
         )
         sys.exit(1)
+
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+    # Explicitly configure the LLM judge and embedding model for Ragas.
+    # Without an explicit embedding model, Answer Relevancy silently
+    # returns NaN because it needs embeddings to compute cosine similarity
+    # between the original question and questions generated from the answer.
+    ragas_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o", temperature=0))
+    ragas_embeddings = LangchainEmbeddingsWrapper(
+        OpenAIEmbeddings(model="text-embedding-3-small")
+    )
 
     # Build a HuggingFace Dataset in the format Ragas expects.
     eval_data = {
@@ -147,7 +161,12 @@ def _evaluate_with_ragas(results: list[dict]) -> None:
     dataset = Dataset.from_dict(eval_data)
 
     print("\nScoring with Ragas (this calls the LLM judge)...\n")
-    score = evaluate(dataset, metrics=[faithfulness, answer_relevancy])
+    score = evaluate(
+        dataset,
+        metrics=[faithfulness, answer_relevancy],
+        llm=ragas_llm,
+        embeddings=ragas_embeddings,
+    )
     df = score.to_pandas()
 
     # Per-question results
