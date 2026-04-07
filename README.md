@@ -1,5 +1,7 @@
 # B2B RAG Chatbot
 
+[![CI](https://github.com/Caroluspalin/Enterprise-RAG-Framework/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Caroluspalin/Enterprise-RAG-Framework/actions/workflows/ci.yml)
+
 > Ask your company documents anything — and get cited, grounded answers in seconds.
 
 A production-ready Retrieval-Augmented Generation (RAG) chatbot that turns an internal PDF library into a conversational knowledge base. Ships with a streaming web UI, chat history, role-based authentication, an admin panel for document management, an embeddable widget, and a terminal chat interface. Built with LangChain, ChromaDB, FastAPI, and Next.js — runs entirely on your own infrastructure.
@@ -67,8 +69,8 @@ Switch your LLM with a single environment variable — no code changes needed:
 ### 1. Clone & install Python dependencies
 
 ```bash
-git clone <your-repo-url>
-cd b2b-rag-chatbot
+git clone https://github.com/Caroluspalin/Enterprise-RAG-Framework.git
+cd Enterprise-RAG-Framework
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -97,7 +99,9 @@ python src/ingest.py
 
 ## Running the Web UI
 
-Two terminals — one for the API, one for the frontend:
+Two terminals — one for the API, one for the frontend.
+
+The database (SQLite tables + default admin user) is created automatically when FastAPI starts via its lifespan event — no manual setup needed.
 
 ```bash
 # Terminal 1 — FastAPI backend
@@ -319,19 +323,32 @@ Frontend settings live in `frontend/.env.local`:
 
 ---
 
-## Advanced: Automated Evaluation
+## Testing
 
-`evaluate.py` measures retrieval and answer quality against a predefined test set without requiring a human reviewer:
-
-- **Keyword hit rate** — fraction of expected terms found in each answer
-- **Source retrieval accuracy** — did the retriever surface the right document?
-- **Response time** — benchmarks across different `TOP_K` settings
+Backend tests run with pytest. The test suite uses in-memory SQLite and mocked LLM/retriever, so no API keys or external services are needed.
 
 ```bash
-python src/evaluate.py --top-k 5
+pip install pytest pytest-mock pytest-cov httpx fpdf2
+python -m pytest tests/ -q
 ```
 
-Reports are saved to `logs/eval_<timestamp>.txt`.
+A CI pipeline (GitHub Actions) runs these tests plus a Bandit security scan on every push to `master` and on pull requests.
+
+---
+
+## Advanced: RAG Evaluation (Ragas)
+
+`scripts/evaluate.py` measures RAG quality against a golden dataset using the [Ragas](https://docs.ragas.io/) framework:
+
+- **Faithfulness** — is the answer grounded in the retrieved context, or does it hallucinate?
+- **Answer Relevancy** — does the generated answer actually address the question?
+
+```bash
+pip install ragas
+python scripts/evaluate.py
+```
+
+Results are printed as a per-question table and an aggregate summary.
 
 ---
 
