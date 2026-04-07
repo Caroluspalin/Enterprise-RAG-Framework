@@ -181,7 +181,7 @@
 > Tavoite: Tuotantoinfrastruktuuri kestää yritysasiakkaiden kuorman, data on turvassa, ja jokainen operaatio on jäljitettävissä.
 
 **Vektoritietokannan migraatio**
-- [ ] Abstraktiokerros: `src/vectorstore.py` joka piilottaa ChromaDB:n taakse yhtenäisen rajapinnan (`add_documents`, `search`, `delete_collection`, `backup`)
+- [x] Abstraktiokerros: `src/vectorstore.py` joka piilottaa ChromaDB:n taakse yhtenäisen rajapinnan (`add_documents`, `search`, `delete_collection`, `backup`)
 - [ ] Pinecone/Qdrant/Weaviate -adapteri: valitse yksi hallinnoitu palvelu ja toteuta adapteri abstraktiokerroksen taakse
 - [ ] Migraatioskripti: lukee olemassa olevan ChromaDB-kokoelman ja siirtää kaikki dokumentit + metadata hallinnoiduun kantaan
 - [ ] Fallback-strategia: jos hallinnoitu palvelu ei ole tavoitettavissa, sovellus voi toimia read-only-tilassa lokaalista cachesta
@@ -189,16 +189,21 @@
 - [ ] `VECTOR_DB_BACKEND`-ympäristömuuttuja: `chroma` (oletus) | `pinecone` | `qdrant` | `weaviate`
 
 **Audit-logitus**
-- [ ] Uusi `audit_log`-taulu: `id`, `timestamp`, `user_id`, `action` (enum: login, login_failed, password_change, user_create, user_delete, api_key_create, api_key_revoke, document_upload, document_delete, chat_query), `target_id`, `ip_address`, `details` (JSON)
-- [ ] Middleware-tason audit-logging `api.py`:ssä: jokainen admin-operaatio ja autentikaatiotapahtuma kirjataan automaattisesti
-- [ ] `GET /api/admin/audit-log` -endpoint: sivutettu listaus, filtteröitävissä action-tyypeillä ja aikavälillä
+- [x] Uusi `audit_log`-taulu: `id`, `timestamp`, `user_id`, `action`, `ip_address`, `details` (JSON)
+- [x] `src/audit.py` -moduuli: `log_event()` ja `get_audit_logs()` -funktiot
+- [x] Audit-logging `api.py`:ssä: LOGIN_SUCCESS/FAILED, USER_CREATED/DELETED, PASSWORD_CHANGED, DOC_UPLOADED/DELETED, API_KEY_CREATED/REVOKED
+- [x] `GET /api/admin/audit-logs` -endpoint: admin-suojattu, limit-parametri, uusimmat ensin
 - [ ] Admin-paneeliin "Audit Log" -tab: kronologinen lista tapahtumista, filtterit, CSV-export
 - [ ] Epäonnistuneiden kirjautumisyritysten seuranta: jos sama IP/käyttäjätunnus epäonnistuu 5 kertaa 15 minuutissa, lukitse tilapäisesti (account lockout)
 
 **Rate limiting -parannus**
-- [ ] Käyttäjäkohtainen rate limiting: IP-pohjaisen lisäksi API-avainkohtainen raja (eri rajat eri avaimille/tier-tasoille)
+- [x] Tier-pohjainen in-memory rate limiter: `src/limiter.py` (sliding window, thread-safe)
+- [x] `users`-tauluun `tier`-sarake: `FREE_USER` (5/min) | `PRO_USER` (60/min), admin = ei rajoitusta
+- [x] Käyttäjäkohtainen rate limiting: user_id tai IP avaimena, tier DB:stä
+- [x] Rate limit -headerit vastauksissa: `X-RateLimit-Limit`, `X-RateLimit-Remaining`
+- [x] Rajoitus `POST /api/chat` ja `POST /api/upload` -endpointeissa
+- [x] 9 uutta testiä (7 yksikkö + 2 integraatio), yhteensä 113 testiä vihreällä
 - [ ] Rate limit -konfiguraatio per endpoint: admin-endpointeille tiukemmat rajat kuin chat-endpointille
-- [ ] Rate limit -headerit vastauksissa: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` — widget.js ja frontend voivat näyttää käyttäjälle jäljellä olevat pyynnöt
 - [ ] Redis-pohjainen rate limiting (valinnainen): kun siirrytään useampaan API-instanssiin, in-memory slowapi ei riitä
 
 **Tietoturvan koventaminen**

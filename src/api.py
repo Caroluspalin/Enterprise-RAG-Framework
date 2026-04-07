@@ -54,6 +54,7 @@ from db import (
     get_messages,
     get_session,
     get_sessions,
+    get_user_by_id,
     get_user_by_username,
     init_db,
     list_api_keys,
@@ -65,6 +66,7 @@ from db import (
 )
 from audit import get_audit_logs, log_event
 from chain import SYSTEM_PROMPT, load_llm
+from limiter import rate_limiter
 from logger import get_logger
 from retriever import get_retriever
 from vectorstore import get_vector_store, reset_vector_store
@@ -139,7 +141,7 @@ app.add_middleware(
     allow_methods=["*"],
     # Explicitly list X-Widget-Key so CORS preflight accepts it from any origin.
     allow_headers=["*"],
-    expose_headers=["X-Widget-Key"],
+    expose_headers=["X-Widget-Key", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
 )
 
 
@@ -320,11 +322,51 @@ def _ensure_session(session_id: str, user_id: str, question: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tier-aware rate limiting helper
+# ---------------------------------------------------------------------------
+
+def _resolve_tier(user_id: str | None, role: str | None = None) -> str:
+    """Determine the rate-limit tier for a given user.
+
+    Admin users are exempt from rate limiting (returns 'ADMIN').
+    If the user is found in the database, their stored tier is used.
+    Falls back to FREE_USER for anonymous or unknown users.
+    """
+    if role == "admin":
+        return "ADMIN"
+    if user_id and user_id != "anonymous":
+        user = get_user_by_id(user_id)
+        if user:
+            if user["role"] == "admin":
+                return "ADMIN"
+            return user.get("tier", "FREE_USER")
+    return "FREE_USER"
+
+
+def _apply_rate_limit(key: str, tier: str) -> dict[str, str]:
+    """Check the rate limiter and raise HTTP 429 if exceeded.
+
+    Returns a dict of rate-limit headers to include in the response.
+    """
+    allowed, limit, remaining = rate_limiter.check(key, tier)
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+    }
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later.",
+            headers=headers,
+        )
+    return headers
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 @app.post("/api/chat")
-@limiter.limit(CHAT_RATE_LIMIT)
 async def chat(request: Request, req: ChatRequest):
     # Validate the X-Widget-Key header to prevent unauthenticated abuse
     # of the LLM.  First check the database for a matching active key,
@@ -338,6 +380,13 @@ async def chat(request: Request, req: ChatRequest):
         # No key provided but a legacy key is configured — require it.
         raise HTTPException(status_code=403, detail="Missing widget API key.")
 
+    # Tier-aware rate limiting — keyed by user_id (or IP for anonymous).
+    rate_key = req.user_id if req.user_id != "anonymous" else (
+        request.client.host if request.client else "unknown"
+    )
+    tier = await asyncio.to_thread(_resolve_tier, req.user_id)
+    rl_headers = _apply_rate_limit(rate_key, tier)
+
     log.info(
         "Chat | question=%r history_len=%d session_id=%s",
         req.question, len(req.history), req.session_id,
@@ -346,9 +395,9 @@ async def chat(request: Request, req: ChatRequest):
         _stream_sse(req.question, req.history, req.session_id, req.user_id),
         media_type="text/event-stream",
         headers={
-            # Prevent proxies and the browser from buffering the stream.
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            **rl_headers,
         },
     )
 
@@ -356,6 +405,11 @@ async def chat(request: Request, req: ChatRequest):
 @app.post("/api/upload")
 async def upload(request: Request, file: UploadFile = File(...)):
     """Save an uploaded PDF to DOCS_PATH and ingest it into ChromaDB."""
+    # Rate limit uploads by IP — there is no authenticated user context here.
+    upload_key = request.client.host if request.client else "unknown"
+    tier = "FREE_USER"
+    _apply_rate_limit(f"upload:{upload_key}", tier)
+
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 

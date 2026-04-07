@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     name          TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    tier          TEXT NOT NULL DEFAULT 'FREE_USER' CHECK (tier IN ('FREE_USER', 'PRO_USER')),
     created_at    TEXT NOT NULL
 );
 
@@ -107,6 +108,14 @@ def init_db() -> None:
     default admin user so the app is usable on first run."""
     with _connect() as conn:
         conn.executescript(_SCHEMA_SQL)
+        # Migration: add tier column to existing users tables that lack it.
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "tier" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN tier TEXT NOT NULL DEFAULT 'FREE_USER'"
+            )
     _seed_default_admin()
 
 
@@ -228,18 +237,27 @@ def auto_title_from_question(question: str, max_length: int = 60) -> str:
 # Users
 # ---------------------------------------------------------------------------
 
-def create_user(username: str, password: str, name: str, role: str = "user") -> dict:
+def create_user(
+    username: str,
+    password: str,
+    name: str,
+    role: str = "user",
+    tier: str = "FREE_USER",
+) -> dict:
     """Create a new user with a bcrypt-hashed password."""
     user_id = uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
     password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO users (id, username, password_hash, name, role, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, username, password_hash, name, role, now),
+            "INSERT INTO users (id, username, password_hash, name, role, tier, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, username, password_hash, name, role, tier, now),
         )
-    return {"id": user_id, "username": username, "name": name, "role": role, "created_at": now}
+    return {
+        "id": user_id, "username": username, "name": name,
+        "role": role, "tier": tier, "created_at": now,
+    }
 
 
 def verify_user(username: str, password: str) -> dict | None:
@@ -249,7 +267,7 @@ def verify_user(username: str, password: str) -> dict | None:
     """
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, password_hash, name, role, created_at "
+            "SELECT id, username, password_hash, name, role, tier, created_at "
             "FROM users WHERE username = ?",
             (username,),
         ).fetchone()
@@ -267,7 +285,7 @@ def get_user_by_username(username: str) -> dict | None:
     """Return a user by username (without password_hash), or None."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, name, role, created_at FROM users WHERE username = ?",
+            "SELECT id, username, name, role, tier, created_at FROM users WHERE username = ?",
             (username,),
         ).fetchone()
     return dict(row) if row else None
@@ -277,9 +295,19 @@ def list_users() -> list[dict]:
     """Return all users (without password hashes)."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, username, name, role, created_at FROM users ORDER BY created_at DESC"
+            "SELECT id, username, name, role, tier, created_at FROM users ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    """Return a user by ID (without password_hash), or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, username, name, role, tier, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def delete_user(user_id: str) -> bool:
