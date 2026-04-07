@@ -27,8 +27,8 @@ def _isolated_db(tmp_path, monkeypatch):
     """Give every test its own SQLite database.
 
     Monkeypatches DB_PATH in the db module and re-runs schema creation
-    so each test starts with a clean users/sessions/messages/api_keys state
-    (plus the default admin seed).
+    so each test starts with a clean state including the organizations
+    table, users (with organization_id), and the default admin seed.
     """
     db_file = tmp_path / "test.db"
     monkeypatch.setenv("CHAT_DB_PATH", str(db_file))
@@ -39,6 +39,13 @@ def _isolated_db(tmp_path, monkeypatch):
     db_module._seed_default_admin()
 
     yield
+
+
+@pytest.fixture()
+def default_org():
+    """Create and return a default test organization."""
+    import db
+    return db.create_organization("Test Corp")
 
 
 @pytest.fixture()

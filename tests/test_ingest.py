@@ -268,6 +268,7 @@ class TestGetAlreadyIngestedHashes:
             documents=["text a", "text b"],
             metadatas=[{"file_hash": "abc123"}, {"file_hash": "def456"}],
             embeddings=[[0.1] * 10, [0.2] * 10],
+            tenant_id="default",
         )
         hashes = get_already_ingested_hashes(store)
         assert hashes == {"abc123", "def456"}
@@ -280,6 +281,7 @@ class TestGetAlreadyIngestedHashes:
             documents=["text"],
             metadatas=[{"some_other_key": "val"}],
             embeddings=[[0.0] * 10],
+            tenant_id="default",
         )
         assert get_already_ingested_hashes(store) == set()
 

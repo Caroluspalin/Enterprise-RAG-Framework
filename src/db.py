@@ -35,29 +35,42 @@ DB_PATH = Path(os.getenv("CHAT_DB_PATH", "./chat_history.db"))
 # ---------------------------------------------------------------------------
 
 _SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS users (
-    id            TEXT PRIMARY KEY,
-    username      TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    name          TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    tier          TEXT NOT NULL DEFAULT 'FREE_USER' CHECK (tier IN ('FREE_USER', 'PRO_USER')),
-    created_at    TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS organizations (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    username        TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    tier            TEXT NOT NULL DEFAULT 'FREE_USER' CHECK (tier IN ('FREE_USER', 'PRO_USER')),
+    organization_id TEXT,
+    created_at      TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id);
+
 CREATE TABLE IF NOT EXISTS api_keys (
-    id         TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL,
-    key_hash   TEXT NOT NULL,
-    label      TEXT NOT NULL,
-    prefix     TEXT NOT NULL,
-    is_active  INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    organization_id TEXT,
+    key_hash        TEXT NOT NULL,
+    label           TEXT NOT NULL,
+    prefix          TEXT NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_user   ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash   ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_org    ON api_keys(organization_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,
@@ -80,17 +93,20 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id, created_at 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at ASC);
 
 CREATE TABLE IF NOT EXISTS audit_log (
-    id         TEXT PRIMARY KEY,
-    timestamp  TEXT NOT NULL,
-    user_id    TEXT,
-    action     TEXT NOT NULL,
-    ip_address TEXT,
-    details    TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    id              TEXT PRIMARY KEY,
+    timestamp       TEXT NOT NULL,
+    user_id         TEXT,
+    organization_id TEXT,
+    action          TEXT NOT NULL,
+    ip_address      TEXT,
+    details         TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action    ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_org       ON audit_log(organization_id);
 """
 
 
@@ -108,15 +124,75 @@ def init_db() -> None:
     default admin user so the app is usable on first run."""
     with _connect() as conn:
         conn.executescript(_SCHEMA_SQL)
-        # Migration: add tier column to existing users tables that lack it.
-        existing_cols = {
+        # Migrations for databases created before multi-tenant support.
+        user_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
         }
-        if "tier" not in existing_cols:
+        if "tier" not in user_cols:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN tier TEXT NOT NULL DEFAULT 'FREE_USER'"
             )
+        if "organization_id" not in user_cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN organization_id TEXT"
+            )
+        ak_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()
+        }
+        if "organization_id" not in ak_cols:
+            conn.execute(
+                "ALTER TABLE api_keys ADD COLUMN organization_id TEXT"
+            )
+        al_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(audit_log)").fetchall()
+        }
+        if "organization_id" not in al_cols:
+            conn.execute(
+                "ALTER TABLE audit_log ADD COLUMN organization_id TEXT"
+            )
     _seed_default_admin()
+
+
+# ---------------------------------------------------------------------------
+# Organizations
+# ---------------------------------------------------------------------------
+
+def create_organization(name: str) -> dict:
+    """Create a new organization and return it as a dict."""
+    org_id = uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO organizations (id, name, created_at) VALUES (?, ?, ?)",
+            (org_id, name, now),
+        )
+    return {"id": org_id, "name": name, "created_at": now}
+
+
+def get_organization(org_id: str) -> dict | None:
+    """Return a single organization or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, name, created_at FROM organizations WHERE id = ?",
+            (org_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_organizations() -> list[dict]:
+    """Return all organizations, newest first."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at FROM organizations ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_organization(org_id: str) -> bool:
+    """Delete an organization. Returns True if a row was deleted."""
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM organizations WHERE id = ?", (org_id,))
+    return cursor.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +319,7 @@ def create_user(
     name: str,
     role: str = "user",
     tier: str = "FREE_USER",
+    organization_id: str | None = None,
 ) -> dict:
     """Create a new user with a bcrypt-hashed password."""
     user_id = uuid4().hex
@@ -250,13 +327,14 @@ def create_user(
     password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO users (id, username, password_hash, name, role, tier, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, username, password_hash, name, role, tier, now),
+            "INSERT INTO users (id, username, password_hash, name, role, tier, organization_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, username, password_hash, name, role, tier, organization_id, now),
         )
     return {
         "id": user_id, "username": username, "name": name,
-        "role": role, "tier": tier, "created_at": now,
+        "role": role, "tier": tier, "organization_id": organization_id,
+        "created_at": now,
     }
 
 
@@ -267,7 +345,7 @@ def verify_user(username: str, password: str) -> dict | None:
     """
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, password_hash, name, role, tier, created_at "
+            "SELECT id, username, password_hash, name, role, tier, organization_id, created_at "
             "FROM users WHERE username = ?",
             (username,),
         ).fetchone()
@@ -285,7 +363,8 @@ def get_user_by_username(username: str) -> dict | None:
     """Return a user by username (without password_hash), or None."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, name, role, tier, created_at FROM users WHERE username = ?",
+            "SELECT id, username, name, role, tier, organization_id, created_at "
+            "FROM users WHERE username = ?",
             (username,),
         ).fetchone()
     return dict(row) if row else None
@@ -295,7 +374,8 @@ def list_users() -> list[dict]:
     """Return all users (without password hashes)."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, username, name, role, tier, created_at FROM users ORDER BY created_at DESC"
+            "SELECT id, username, name, role, tier, organization_id, created_at "
+            "FROM users ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -304,7 +384,8 @@ def get_user_by_id(user_id: str) -> dict | None:
     """Return a user by ID (without password_hash), or None."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, name, role, tier, created_at FROM users WHERE id = ?",
+            "SELECT id, username, name, role, tier, organization_id, created_at "
+            "FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
     return dict(row) if row else None
@@ -350,11 +431,12 @@ def _hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-def create_api_key(user_id: str, label: str) -> dict:
+def create_api_key(user_id: str, label: str, organization_id: str | None = None) -> dict:
     """Generate a cryptographically secure API key for a user.
 
     The raw key is returned ONCE in the response.  Only its SHA-256 hash
     is stored in the database — the plaintext cannot be recovered later.
+    When organization_id is provided, the key is bound to that tenant.
     """
     key_id = uuid4().hex
     raw_key = "rag_" + secrets.token_urlsafe(32)
@@ -365,9 +447,9 @@ def create_api_key(user_id: str, label: str) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO api_keys (id, user_id, key_hash, label, prefix, is_active, created_at) "
-            "VALUES (?, ?, ?, ?, ?, 1, ?)",
-            (key_id, user_id, key_hash, label, prefix, now),
+            "INSERT INTO api_keys (id, user_id, organization_id, key_hash, label, prefix, is_active, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (key_id, user_id, organization_id, key_hash, label, prefix, now),
         )
     return {
         "id": key_id,
@@ -410,13 +492,13 @@ def delete_api_key(key_id: str) -> bool:
 def verify_api_key(raw_key: str) -> dict | None:
     """Hash the raw key and look up an active match in the database.
 
-    Returns {"user_id": ..., "label": ...} on success, None if invalid
-    or revoked.
+    Returns {"user_id": ..., "label": ..., "organization_id": ...} on
+    success, None if invalid or revoked.
     """
     key_hash = _hash_api_key(raw_key)
     with _connect() as conn:
         row = conn.execute(
-            "SELECT user_id, label FROM api_keys "
+            "SELECT user_id, label, organization_id FROM api_keys "
             "WHERE key_hash = ? AND is_active = 1",
             (key_hash,),
         ).fetchone()

@@ -29,7 +29,13 @@ VECTOR_DB_BACKEND = os.getenv("VECTOR_DB_BACKEND", "chroma").lower()
 
 
 class BaseVectorStore(ABC):
-    """Unified interface that all vector store backends must implement."""
+    """Unified interface that all vector store backends must implement.
+
+    Every method that reads or writes data requires a tenant_id parameter
+    to enforce strict multi-tenant isolation at the data layer.  The RAG
+    engine must never be able to access documents without specifying which
+    organization they belong to.
+    """
 
     @abstractmethod
     def add_documents(
@@ -38,32 +44,36 @@ class BaseVectorStore(ABC):
         documents: list[str],
         metadatas: list[dict],
         embeddings: list[list[float]],
+        tenant_id: str = "default",
     ) -> None:
-        """Add document chunks with their embeddings and metadata."""
+        """Add document chunks with their embeddings and metadata.
+
+        tenant_id is injected into every chunk's metadata automatically.
+        """
 
     @abstractmethod
-    def get_all_metadata(self) -> list[dict]:
-        """Return metadata dicts for every stored chunk."""
+    def get_all_metadata(self, tenant_id: str = "default") -> list[dict]:
+        """Return metadata dicts for chunks belonging to tenant_id."""
 
     @abstractmethod
     def delete_by_ids(self, ids: list[str]) -> None:
         """Delete chunks by their IDs."""
 
     @abstractmethod
-    def delete_by_metadata(self, field: str, value: str) -> int:
-        """Delete all chunks where metadata[field] == value. Return count."""
+    def delete_by_metadata(self, field: str, value: str, tenant_id: str = "default") -> int:
+        """Delete all chunks where metadata[field] == value within a tenant. Return count."""
 
     @abstractmethod
-    def count(self) -> int:
-        """Return the total number of chunks in the store."""
+    def count(self, tenant_id: str | None = None) -> int:
+        """Return the number of chunks. If tenant_id is given, count only that tenant's chunks."""
 
     @abstractmethod
     def reset(self) -> None:
         """Delete the entire collection and recreate it empty."""
 
     @abstractmethod
-    def as_langchain_retriever(self, k: int = 5):
-        """Return a LangChain-compatible retriever for similarity search."""
+    def as_langchain_retriever(self, k: int = 5, tenant_id: str = "default"):
+        """Return a LangChain-compatible retriever scoped to tenant_id."""
 
 
 class ChromaVectorStore(BaseVectorStore):
@@ -87,38 +97,54 @@ class ChromaVectorStore(BaseVectorStore):
         documents: list[str],
         metadatas: list[dict],
         embeddings: list[list[float]],
+        tenant_id: str = "default",
     ) -> None:
+        # Inject tenant_id into every chunk's metadata so queries can
+        # filter by tenant later.  Never trust the caller to set this.
+        tagged = [{**m, "tenant_id": tenant_id} for m in metadatas]
         self._collection.add(
             ids=ids,
             documents=documents,
-            metadatas=metadatas,
+            metadatas=tagged,
             embeddings=embeddings,
         )
 
-    def get_all_metadata(self) -> list[dict]:
-        results = self._collection.get(include=["metadatas"])
+    def get_all_metadata(self, tenant_id: str = "default") -> list[dict]:
+        results = self._collection.get(
+            where={"tenant_id": tenant_id},
+            include=["metadatas"],
+        )
         return results["metadatas"]
 
     def delete_by_ids(self, ids: list[str]) -> None:
         self._collection.delete(ids=ids)
 
-    def delete_by_metadata(self, field: str, value: str) -> int:
+    def delete_by_metadata(self, field: str, value: str, tenant_id: str = "default") -> int:
+        # Combine tenant filter with the requested field filter using $and
+        # to ensure we never touch another tenant's data.
         results = self._collection.get(
-            where={field: value}, include=["metadatas"]
+            where={"$and": [{"tenant_id": tenant_id}, {field: value}]},
+            include=["metadatas"],
         )
         ids = results["ids"]
         if ids:
             self._collection.delete(ids=ids)
         return len(ids)
 
-    def count(self) -> int:
-        return self._collection.count()
+    def count(self, tenant_id: str | None = None) -> int:
+        if tenant_id is None:
+            return self._collection.count()
+        results = self._collection.get(
+            where={"tenant_id": tenant_id},
+            include=[],
+        )
+        return len(results["ids"])
 
     def reset(self) -> None:
         self._client.delete_collection(self._collection_name)
         self._collection = self._client.get_or_create_collection(self._collection_name)
 
-    def as_langchain_retriever(self, k: int = 5):
+    def as_langchain_retriever(self, k: int = 5, tenant_id: str = "default"):
         from langchain_chroma import Chroma
         from langchain_openai import OpenAIEmbeddings
 
@@ -130,7 +156,7 @@ class ChromaVectorStore(BaseVectorStore):
         )
         return langchain_store.as_retriever(
             search_type="similarity",
-            search_kwargs={"k": k},
+            search_kwargs={"k": k, "filter": {"tenant_id": tenant_id}},
         )
 
 

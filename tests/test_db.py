@@ -8,6 +8,52 @@ import db
 
 
 # ---------------------------------------------------------------------------
+# Organizations
+# ---------------------------------------------------------------------------
+
+class TestOrganizations:
+    def test_create_organization(self):
+        org = db.create_organization("Acme Inc")
+        assert org["name"] == "Acme Inc"
+        assert "id" in org
+        assert "created_at" in org
+
+    def test_get_organization(self):
+        org = db.create_organization("Globex")
+        fetched = db.get_organization(org["id"])
+        assert fetched is not None
+        assert fetched["name"] == "Globex"
+
+    def test_get_nonexistent_organization(self):
+        assert db.get_organization("no-such-id") is None
+
+    def test_list_organizations(self):
+        db.create_organization("Org A")
+        db.create_organization("Org B")
+        orgs = db.list_organizations()
+        assert len(orgs) == 2
+        # Most recent first.
+        assert orgs[0]["name"] == "Org B"
+
+    def test_delete_organization(self):
+        org = db.create_organization("Temp Org")
+        assert db.delete_organization(org["id"]) is True
+        assert db.get_organization(org["id"]) is None
+
+    def test_delete_nonexistent_organization(self):
+        assert db.delete_organization("fake-id") is False
+
+    def test_user_org_fk_nullified_on_org_delete(self):
+        """When an org is deleted, users' organization_id should become NULL."""
+        org = db.create_organization("Vanishing Corp")
+        user = db.create_user("orguser", "pass", "Org User", organization_id=org["id"])
+        assert user["organization_id"] == org["id"]
+        db.delete_organization(org["id"])
+        refreshed = db.get_user_by_id(user["id"])
+        assert refreshed["organization_id"] is None
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
@@ -63,6 +109,24 @@ class TestUsers:
     def test_change_password_wrong_old(self):
         user = db.create_user("frank", "correct", "Frank")
         assert db.change_password(user["id"], "wrong", "new") is False
+
+    def test_create_user_with_organization(self):
+        org = db.create_organization("Test Org")
+        user = db.create_user("orgmember", "pass", "Org Member", organization_id=org["id"])
+        assert user["organization_id"] == org["id"]
+        fetched = db.get_user_by_id(user["id"])
+        assert fetched["organization_id"] == org["id"]
+
+    def test_create_user_without_organization(self):
+        user = db.create_user("solo", "pass", "Solo User")
+        assert user["organization_id"] is None
+
+    def test_list_users_includes_organization_id(self):
+        org = db.create_organization("Listed Org")
+        db.create_user("listed", "pass", "Listed", organization_id=org["id"])
+        users = db.list_users()
+        listed = next(u for u in users if u["username"] == "listed")
+        assert listed["organization_id"] == org["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +220,21 @@ class TestApiKeys:
         for k in keys:
             assert "raw_key" not in k
             assert "key_hash" not in k
+
+    def test_create_api_key_with_organization(self):
+        org = db.create_organization("Key Org")
+        user = db.create_user("keyorguser", "pass", "Key Org User", organization_id=org["id"])
+        result = db.create_api_key(user["id"], "org-key", organization_id=org["id"])
+        assert result["raw_key"].startswith("rag_")
+        # Verify that organization_id is returned on verification.
+        verified = db.verify_api_key(result["raw_key"])
+        assert verified["organization_id"] == org["id"]
+
+    def test_verify_api_key_returns_organization_id(self):
+        user = db.create_user("verifyorguser", "pass", "Verify Org User")
+        result = db.create_api_key(user["id"], "no-org-key")
+        verified = db.verify_api_key(result["raw_key"])
+        assert verified["organization_id"] is None
 
 
 # ---------------------------------------------------------------------------
