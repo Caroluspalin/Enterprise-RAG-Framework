@@ -50,20 +50,9 @@ jobs:
 
       - name: Dependency audit (pip-audit)
         run: |
-          pip-audit --format json --output pip-audit-report.json || true
-          # Fail the build only on critical/high vulnerabilities.
-          VULN_COUNT=$(python -c "
-          import json
-          with open('pip-audit-report.json') as f:
-              data = json.load(f)
-          deps = data if isinstance(data, list) else data.get('dependencies', [])
-          vulns = sum(len(d.get('vulns', [])) for d in deps)
-          print(vulns)
-          ")
-          echo "Vulnerabilities found: $VULN_COUNT"
-          if [ "$VULN_COUNT" -gt 0 ]; then
-            echo "::warning::pip-audit found $VULN_COUNT known vulnerability/ies. Review pip-audit-report.json."
-          fi
+          # Ignored: diskcache CVE-2025-69872 — transitive dependency via ragas, no patch available (2026-04-07)
+          pip-audit --ignore-vuln CVE-2025-69872 --format json --output pip-audit-report.json
+          echo "pip-audit passed (0 unignored vulnerabilities)"
 
       - name: Security scan (bandit)
         run: |

@@ -182,19 +182,19 @@
 
 **Vektoritietokannan migraatio**
 - [x] Abstraktiokerros: `src/vectorstore.py` joka piilottaa ChromaDB:n taakse yhtenäisen rajapinnan (`add_documents`, `search`, `delete_collection`, `backup`)
-- [ ] Pinecone/Qdrant/Weaviate -adapteri: valitse yksi hallinnoitu palvelu ja toteuta adapteri abstraktiokerroksen taakse
-- [ ] Migraatioskripti: lukee olemassa olevan ChromaDB-kokoelman ja siirtää kaikki dokumentit + metadata hallinnoiduun kantaan
-- [ ] Fallback-strategia: jos hallinnoitu palvelu ei ole tavoitettavissa, sovellus voi toimia read-only-tilassa lokaalista cachesta
-- [ ] ChromaDB S3-varmuuskopiointi (vaihtoehto hallinnoidulle palvelulle): automaattinen snapshot `chroma_db/`-hakemistosta S3:een cron-ajoituksella tai API-kutsulla
-- [ ] `VECTOR_DB_BACKEND`-ympäristömuuttuja: `chroma` (oletus) | `pinecone` | `qdrant` | `weaviate`
+- [x] Pinecone/Qdrant/Weaviate -adapteri: valitse yksi hallinnoitu palvelu ja toteuta adapteri abstraktiokerroksen taakse
+- [x] Migraatioskripti: lukee olemassa olevan ChromaDB-kokoelman ja siirtää kaikki dokumentit + metadata hallinnoiduun kantaan
+- [x] Fallback-strategia: jos hallinnoitu palvelu ei ole tavoitettavissa, sovellus voi toimia read-only-tilassa lokaalista cachesta
+- [x] ChromaDB S3-varmuuskopiointi (vaihtoehto hallinnoidulle palvelulle): automaattinen snapshot `chroma_db/`-hakemistosta S3:een cron-ajoituksella tai API-kutsulla
+- [x] `VECTOR_DB_BACKEND`-ympäristömuuttuja: `chroma` (oletus) | `pinecone` | `qdrant` | `weaviate`
 
 **Audit-logitus**
 - [x] Uusi `audit_log`-taulu: `id`, `timestamp`, `user_id`, `action`, `ip_address`, `details` (JSON)
 - [x] `src/audit.py` -moduuli: `log_event()` ja `get_audit_logs()` -funktiot
 - [x] Audit-logging `api.py`:ssä: LOGIN_SUCCESS/FAILED, USER_CREATED/DELETED, PASSWORD_CHANGED, DOC_UPLOADED/DELETED, API_KEY_CREATED/REVOKED
 - [x] `GET /api/admin/audit-logs` -endpoint: admin-suojattu, limit-parametri, uusimmat ensin
-- [ ] Admin-paneeliin "Audit Log" -tab: kronologinen lista tapahtumista, filtterit, CSV-export
-- [ ] Epäonnistuneiden kirjautumisyritysten seuranta: jos sama IP/käyttäjätunnus epäonnistuu 5 kertaa 15 minuutissa, lukitse tilapäisesti (account lockout)
+- [x] Admin-paneeliin "Audit Log" -tab: kronologinen lista tapahtumista, filtterit, CSV-export
+- [x] Epäonnistuneiden kirjautumisyritysten seuranta: jos sama IP/käyttäjätunnus epäonnistuu 5 kertaa 15 minuutissa, lukitse tilapäisesti (account lockout)
 
 **Rate limiting -parannus**
 - [x] Tier-pohjainen in-memory rate limiter: `src/limiter.py` (sliding window, thread-safe)
@@ -203,15 +203,15 @@
 - [x] Rate limit -headerit vastauksissa: `X-RateLimit-Limit`, `X-RateLimit-Remaining`
 - [x] Rajoitus `POST /api/chat` ja `POST /api/upload` -endpointeissa
 - [x] 9 uutta testiä (7 yksikkö + 2 integraatio), yhteensä 113 testiä vihreällä
-- [ ] Rate limit -konfiguraatio per endpoint: admin-endpointeille tiukemmat rajat kuin chat-endpointille
-- [ ] Redis-pohjainen rate limiting (valinnainen): kun siirrytään useampaan API-instanssiin, in-memory slowapi ei riitä
+- [x] Rate limit -konfiguraatio per endpoint: admin-endpointeille tiukemmat rajat kuin chat-endpointille
+- [x] Redis-pohjainen rate limiting (valinnainen): kun siirrytään useampaan API-instanssiin, in-memory slowapi ei riitä
 
 **Tietoturvan koventaminen**
-- [ ] Login-yrityksen rate limiting: `slowapi`-rajoitus `/api/auth/login`-endpointille (max 10/minuutti per IP)
-- [ ] Session-invalidointi: admin voi pakottaa käyttäjän uloskirjautumisen (`force_logout`-kenttä users-tauluun, tarkistetaan jokaisessa pyynnössä)
-- [ ] CORS-konfiguraation validointi: varmista ettei `ALLOWED_ORIGINS` sisällä `*` tuotannossa (lisää startup-varoitus)
-- [ ] Helmet-tyyppiset security-headerit: `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` FastAPI-middleware-tasolla
-- [ ] Dependency-auditointi: `pip-audit` ja `npm audit` CI-pipelineen — pipeline feilaa kriittisistä haavoittuvuuksista
+- [x] Login-yrityksen rate limiting: `slowapi`-rajoitus `/api/auth/login`-endpointille (max 10/minuutti per IP)
+- [x] Session-invalidointi: admin voi pakottaa käyttäjän uloskirjautumisen (`force_logout`-kenttä users-tauluun, tarkistetaan jokaisessa pyynnössä)
+- [x] CORS-konfiguraation validointi: varmista ettei `ALLOWED_ORIGINS` sisällä `*` tuotannossa (lisää startup-varoitus)
+- [x] Helmet-tyyppiset security-headerit: `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` FastAPI-middleware-tasolla
+- [x] Dependency-auditointi: `pip-audit` ja `npm audit` CI-pipelineen — pipeline feilaa kriittisistä haavoittuvuuksista
 
 ---
 

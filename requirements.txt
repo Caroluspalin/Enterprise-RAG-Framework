@@ -1,17 +1,17 @@
 # Web API
-fastapi==0.115.6
+fastapi==0.135.3
 uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+python-multipart==0.0.24
 slowapi==0.1.9
 
 # Core RAG dependencies
-langchain==0.3.25
-langchain-community==0.3.23
-langchain-openai==0.3.16
-langchain-anthropic==0.3.15
-langchain-chroma==0.2.4
-chromadb==1.5.5
-pypdf==5.4.0
+langchain==1.2.15
+langchain-community==0.4.1
+langchain-openai==1.1.12
+langchain-anthropic==1.4.0
+langchain-chroma==1.1.0
+chromadb==1.5.6
+pypdf==6.9.2
 python-dotenv==1.1.0
 
 # Authentication
@@ -20,5 +20,5 @@ bcrypt==4.2.1
 # Optional / quality-of-life
 tiktoken==0.9.0
 rich==13.9.4
-ollama==0.4.7
-langchain-ollama==0.2.3
+ollama==0.6.1
+langchain-ollama==1.1.0
