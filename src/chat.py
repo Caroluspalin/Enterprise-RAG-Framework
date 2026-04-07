@@ -27,34 +27,32 @@ from rich.rule import Rule
 sys.path.insert(0, str(Path(__file__).parent))
 
 from chain import build_chain, format_sources, invoke_chain
-from retriever import get_vector_store
+from vectorstore import get_vector_store as get_vs
 
 load_dotenv()
 
 DOCS_PATH = Path(os.getenv("DOCS_PATH", "./docs"))
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "b2b_docs")
 
 console = Console()
 
 
 def get_document_count() -> int:
-    """Return the total number of chunks stored in ChromaDB."""
+    """Return the total number of chunks stored in the vector store."""
     try:
-        store = get_vector_store()
-        return store._collection.count()
+        store = get_vs()
+        return store.count()
     except Exception:
-        # ChromaDB not yet initialised — user needs to run ingest.py first.
         return 0
 
 
 def list_ingested_files() -> list[str]:
-    """Return deduplicated list of source filenames stored in ChromaDB."""
+    """Return deduplicated list of source filenames stored in the vector store."""
     try:
-        store = get_vector_store()
-        results = store._collection.get(include=["metadatas"])
+        store = get_vs()
+        metadatas = store.get_all_metadata()
         files = sorted({
             m["source_file"]
-            for m in results["metadatas"]
+            for m in metadatas
             if "source_file" in m
         })
         return files

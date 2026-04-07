@@ -17,14 +17,17 @@ from chromadb import PersistentClient
 from fpdf import FPDF
 
 import ingest as ingest_module
+import vectorstore as vs_module
 from ingest import (
-    COLLECTION_NAME,
     compute_file_hash,
     find_pdfs,
     get_already_ingested_hashes,
     load_and_split,
     ingest,
 )
+
+# Default collection name used in tests — matches the env default.
+COLLECTION_NAME = "b2b_docs"
 
 
 # ---------------------------------------------------------------------------
@@ -82,15 +85,27 @@ def chroma_dir(tmp_path):
 
 @pytest.fixture()
 def patch_ingest_paths(monkeypatch, docs_dir, chroma_dir):
-    """Point all ingest module-level paths at temporary directories and
-    replace OpenAIEmbeddings with the fake embedder."""
+    """Point all ingest module-level paths at temporary directories,
+    inject a ChromaVectorStore backed by tmp_path, and replace
+    OpenAIEmbeddings with the fake embedder."""
     monkeypatch.setattr(ingest_module, "DOCS_PATH", docs_dir)
-    monkeypatch.setattr(ingest_module, "CHROMA_PATH", chroma_dir)
+
+    # Create a fresh ChromaVectorStore pointing at the tmp chroma dir
+    # and inject it as the vectorstore singleton so ingest() uses it.
+    from vectorstore import ChromaVectorStore
+    test_store = ChromaVectorStore(
+        chroma_path=str(chroma_dir),
+        collection_name=COLLECTION_NAME,
+    )
+    monkeypatch.setattr(vs_module, "_instance", test_store)
 
     mock_embeddings = MagicMock()
     mock_embeddings.embed_documents = _fake_embed
     with patch("ingest.OpenAIEmbeddings", return_value=mock_embeddings):
         yield
+
+    # Reset singleton after test so other tests get a clean state.
+    vs_module._instance = None
 
 
 # ---------------------------------------------------------------------------
@@ -240,33 +255,33 @@ class TestLoadAndSplit:
 # ---------------------------------------------------------------------------
 
 class TestGetAlreadyIngestedHashes:
-    def test_empty_collection(self, chroma_dir):
-        client = PersistentClient(path=str(chroma_dir))
-        coll = client.get_or_create_collection("test_coll")
-        assert get_already_ingested_hashes(coll) == set()
+    def test_empty_store(self, chroma_dir):
+        from vectorstore import ChromaVectorStore
+        store = ChromaVectorStore(chroma_path=str(chroma_dir), collection_name="test_coll")
+        assert get_already_ingested_hashes(store) == set()
 
     def test_returns_stored_hashes(self, chroma_dir):
-        client = PersistentClient(path=str(chroma_dir))
-        coll = client.get_or_create_collection("test_coll")
-        coll.add(
+        from vectorstore import ChromaVectorStore
+        store = ChromaVectorStore(chroma_path=str(chroma_dir), collection_name="test_coll")
+        store.add_documents(
             ids=["chunk1", "chunk2"],
             documents=["text a", "text b"],
             metadatas=[{"file_hash": "abc123"}, {"file_hash": "def456"}],
             embeddings=[[0.1] * 10, [0.2] * 10],
         )
-        hashes = get_already_ingested_hashes(coll)
+        hashes = get_already_ingested_hashes(store)
         assert hashes == {"abc123", "def456"}
 
     def test_ignores_entries_without_hash(self, chroma_dir):
-        client = PersistentClient(path=str(chroma_dir))
-        coll = client.get_or_create_collection("test_coll")
-        coll.add(
+        from vectorstore import ChromaVectorStore
+        store = ChromaVectorStore(chroma_path=str(chroma_dir), collection_name="test_coll")
+        store.add_documents(
             ids=["no_hash"],
             documents=["text"],
             metadatas=[{"some_other_key": "val"}],
             embeddings=[[0.0] * 10],
         )
-        assert get_already_ingested_hashes(coll) == set()
+        assert get_already_ingested_hashes(store) == set()
 
 
 # ---------------------------------------------------------------------------

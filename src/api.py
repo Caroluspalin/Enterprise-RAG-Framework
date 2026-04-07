@@ -66,6 +66,7 @@ from db import (
 from chain import SYSTEM_PROMPT, load_llm
 from logger import get_logger
 from retriever import get_retriever
+from vectorstore import get_vector_store, reset_vector_store
 
 log = get_logger("api")
 
@@ -379,26 +380,21 @@ async def upload(file: UploadFile = File(...)):
 
 
 def _ingest_pdf(pdf_path: Path) -> None:
-    """Ingest a single PDF into ChromaDB (called from a thread pool).
+    """Ingest a single PDF into the vector store (called from a thread pool).
 
     Reuses load_and_split() and compute_file_hash() from ingest.py to keep
     chunking behaviour identical between the CLI and the web upload path.
     """
-    # Local imports avoid polluting the module namespace and allow ingest.py
-    # to be imported without triggering its __main__ block.
-    from ingest import compute_file_hash, load_and_split, CHROMA_PATH, COLLECTION_NAME
-    from chromadb import PersistentClient
+    from ingest import compute_file_hash, load_and_split
     from langchain_openai import OpenAIEmbeddings
 
-    client = PersistentClient(path=str(CHROMA_PATH))
-    collection = client.get_or_create_collection(COLLECTION_NAME)
+    store = get_vector_store()
     embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
 
     file_hash = compute_file_hash(pdf_path)
 
     # Skip re-ingestion if the file content has not changed.
-    existing = collection.get(include=["metadatas"])
-    existing_hashes = {m.get("file_hash") for m in existing["metadatas"]}
+    existing_hashes = {m.get("file_hash") for m in store.get_all_metadata()}
     if file_hash in existing_hashes:
         log.info("Skipping unchanged file: %s", pdf_path.name)
         return
@@ -416,32 +412,27 @@ def _ingest_pdf(pdf_path: Path) -> None:
     ]
     vectors = embeddings_model.embed_documents(documents)
 
-    collection.add(ids=ids, documents=documents, metadatas=metadatas, embeddings=vectors)
+    store.add_documents(ids=ids, documents=documents, metadatas=metadatas, embeddings=vectors)
     log.info("Ingested %s | chunks=%d", pdf_path.name, len(chunks))
 
 
 @app.get("/api/documents")
 async def list_documents():
-    """Return unique filenames currently embedded in ChromaDB.
+    """Return unique filenames currently in the vector store.
 
     Reading from the vector store (not just DOCS_PATH) ensures the list
     accurately reflects what the RAG pipeline can actually retrieve from.
     """
-    from ingest import CHROMA_PATH, COLLECTION_NAME
-    from chromadb import PersistentClient
 
-    def _query_chroma():
-        client = PersistentClient(path=str(CHROMA_PATH))
+    def _query_store():
         try:
-            collection = client.get_collection(COLLECTION_NAME)
+            store = get_vector_store()
+            metadatas = store.get_all_metadata()
         except Exception:
-            # Collection does not exist yet — no documents ingested.
             return []
 
-        results = collection.get(include=["metadatas"])
-        # Collect unique filenames, preserving insertion order via dict.
         seen: dict[str, bool] = {}
-        for meta in results["metadatas"]:
+        for meta in metadatas:
             name = meta.get("source_file")
             if name:
                 seen[name] = True
@@ -454,46 +445,39 @@ async def list_documents():
 
         return documents
 
-    documents = await asyncio.to_thread(_query_chroma)
+    documents = await asyncio.to_thread(_query_store)
     return {"documents": documents}
 
 
 @app.delete("/api/documents/{filename}")
 async def delete_document(filename: str):
-    """Remove all ChromaDB embeddings for filename and delete the PDF from disk.
+    """Remove all vector store embeddings for filename and delete the PDF from disk.
 
     Steps:
-      1. Find all chunk IDs in ChromaDB where source_file == filename.
-      2. Delete those chunks from the collection.
-      3. Delete the physical PDF file from DOCS_PATH (if it exists).
-      4. Invalidate the retriever cache so the next chat request does not
+      1. Delete all chunks where source_file == filename via the vector store.
+      2. Delete the physical PDF file from DOCS_PATH (if it exists).
+      3. Invalidate the retriever cache so the next chat request does not
          serve stale results from the now-deleted document.
     """
-    from ingest import CHROMA_PATH, COLLECTION_NAME
-    from chromadb import PersistentClient
 
-    def _delete_from_chroma():
-        client = PersistentClient(path=str(CHROMA_PATH))
+    def _delete_from_store():
         try:
-            collection = client.get_collection(COLLECTION_NAME)
+            store = get_vector_store()
         except Exception:
             raise HTTPException(status_code=404, detail="No documents have been ingested yet.")
 
-        # ChromaDB's where filter uses exact-match on metadata fields.
-        results = collection.get(where={"source_file": filename}, include=["metadatas"])
-        ids_to_delete = results["ids"]
+        deleted = store.delete_by_metadata("source_file", filename)
 
-        if not ids_to_delete:
+        if deleted == 0:
             raise HTTPException(
                 status_code=404,
                 detail=f"'{filename}' was not found in the vector store.",
             )
 
-        collection.delete(ids=ids_to_delete)
-        log.info("Deleted %d chunks for '%s' from ChromaDB", len(ids_to_delete), filename)
-        return len(ids_to_delete)
+        log.info("Deleted %d chunks for '%s' from vector store", deleted, filename)
+        return deleted
 
-    chunks_deleted = await asyncio.to_thread(_delete_from_chroma)
+    chunks_deleted = await asyncio.to_thread(_delete_from_store)
 
     # Also remove the physical file so it cannot be re-ingested accidentally.
     disk_path = DOCS_PATH / filename

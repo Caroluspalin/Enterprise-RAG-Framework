@@ -17,7 +17,6 @@ import os
 import sys
 from pathlib import Path
 
-from chromadb import PersistentClient
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_openai import OpenAIEmbeddings
@@ -26,6 +25,7 @@ from rich.console import Console
 from rich.progress import track
 
 from logger import get_logger
+from vectorstore import get_vector_store, reset_vector_store
 
 load_dotenv()
 
@@ -37,8 +37,6 @@ log = get_logger("ingest")
 # ---------------------------------------------------------------------------
 
 DOCS_PATH = Path(os.getenv("DOCS_PATH", "./docs"))
-CHROMA_PATH = Path(os.getenv("CHROMA_PATH", "./chroma_db"))
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "b2b_docs")
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1000))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 200))
 
@@ -86,14 +84,14 @@ def load_and_split(pdf_path: Path) -> list:
     return chunks
 
 
-def get_already_ingested_hashes(collection) -> set[str]:
-    """Return the set of file hashes already stored in the collection.
+def get_already_ingested_hashes(store) -> set[str]:
+    """Return the set of file hashes already stored in the vector store.
 
     Querying existing hashes lets us skip PDFs that have not changed since
     the last ingest run, avoiding duplicate embeddings and wasted API calls.
     """
-    results = collection.get(include=["metadatas"])
-    return {m["file_hash"] for m in results["metadatas"] if "file_hash" in m}
+    metadatas = store.get_all_metadata()
+    return {m["file_hash"] for m in metadatas if "file_hash" in m}
 
 
 def ingest(reset: bool = False) -> None:
@@ -106,18 +104,17 @@ def ingest(reset: bool = False) -> None:
     log.info("Ingest started | docs_path=%s chunk_size=%d overlap=%d reset=%s",
              DOCS_PATH, CHUNK_SIZE, CHUNK_OVERLAP, reset)
 
-    # Connect to (or create) the local ChromaDB store.
-    client = PersistentClient(path=str(CHROMA_PATH))
+    # Get the vector store via the abstraction layer.
+    store = get_vector_store()
 
     if reset:
         console.print("[red]Resetting collection — deleting all existing chunks...[/red]")
-        log.info("Resetting collection: %s", COLLECTION_NAME)
-        client.delete_collection(COLLECTION_NAME)
+        log.info("Resetting vector store collection")
+        store.reset()
 
-    collection = client.get_or_create_collection(COLLECTION_NAME)
     embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
 
-    already_ingested = get_already_ingested_hashes(collection)
+    already_ingested = get_already_ingested_hashes(store)
 
     total_chunks_added = 0
     skipped_files = 0
@@ -153,7 +150,7 @@ def ingest(reset: bool = False) -> None:
         # Generate all embeddings for this file in one batched API call.
         vectors = embeddings_model.embed_documents(documents)
 
-        collection.add(
+        store.add_documents(
             ids=ids,
             documents=documents,
             metadatas=metadatas,
@@ -166,14 +163,14 @@ def ingest(reset: bool = False) -> None:
 
     log.info(
         "Ingest complete | processed=%d skipped=%d chunks_added=%d total_in_db=%d",
-        len(pdfs) - skipped_files, skipped_files, total_chunks_added, collection.count(),
+        len(pdfs) - skipped_files, skipped_files, total_chunks_added, store.count(),
     )
     console.print()
     console.print(f"[bold]Ingestion complete.[/bold]")
     console.print(f"  PDFs processed : {len(pdfs) - skipped_files}")
     console.print(f"  PDFs skipped   : {skipped_files} (unchanged)")
     console.print(f"  Chunks added   : {total_chunks_added}")
-    console.print(f"  Collection size: {collection.count()} total chunks in ChromaDB")
+    console.print(f"  Collection size: {store.count()} total chunks")
 
 
 if __name__ == "__main__":
