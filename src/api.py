@@ -69,6 +69,7 @@ from chain import SYSTEM_PROMPT, load_llm
 from limiter import rate_limiter
 from logger import get_logger
 from retriever import get_retriever
+from security import SecurityHeadersMiddleware
 from vectorstore import get_vector_store, reset_vector_store
 
 log = get_logger("api")
@@ -131,9 +132,15 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
+
 # CORS — origins are read from the ALLOWED_ORIGINS env var (comma-separated).
 # In development the default includes localhost:3000.
 log.info("CORS allowed origins: %s", ALLOWED_ORIGINS)
+if "*" in ALLOWED_ORIGINS:
+    log.warning(
+        "ALLOWED_ORIGINS contains '*' — this disables CORS protection. "
+        "Never use wildcard origins in production."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -143,6 +150,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Widget-Key", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
 )
+
+# Security headers (X-Content-Type-Options, X-Frame-Options, CSP, HSTS).
+# Must be added AFTER CORSMiddleware so both layers run on every response.
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -623,6 +634,12 @@ class RegisterRequest(BaseModel):
     role: str = "user"
 
 
+# Login attempts are rate-limited much more aggressively than chat:
+# 5 attempts per 5 minutes per IP to mitigate brute-force attacks.
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 300
+
+
 @app.post("/api/auth/login")
 async def login(request: Request, req: LoginRequest):
     """Verify credentials and return user info (without password hash).
@@ -631,6 +648,24 @@ async def login(request: Request, req: LoginRequest):
     this endpoint just validates username + bcrypt hash in SQLite.
     """
     ip = request.client.host if request.client else None
+
+    # Tight rate limit on login attempts to slow down brute-force attacks.
+    login_key = f"login:{ip or 'unknown'}"
+    allowed, limit, remaining = rate_limiter.check(
+        login_key, "LOGIN",
+        max_requests=_LOGIN_MAX_ATTEMPTS,
+        window=_LOGIN_WINDOW_SECONDS,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Please try again later.",
+            headers={
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": "0",
+            },
+        )
+
     user = await asyncio.to_thread(verify_user, req.username, req.password)
     if not user:
         # Log the failed attempt — user_id is unknown, so record the username

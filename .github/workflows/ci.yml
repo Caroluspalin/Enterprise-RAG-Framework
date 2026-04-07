@@ -46,7 +46,24 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-mock pytest-cov httpx bandit fpdf2
+          pip install pytest pytest-mock pytest-cov httpx bandit fpdf2 pip-audit
+
+      - name: Dependency audit (pip-audit)
+        run: |
+          pip-audit --format json --output pip-audit-report.json || true
+          # Fail the build only on critical/high vulnerabilities.
+          VULN_COUNT=$(python -c "
+          import json
+          with open('pip-audit-report.json') as f:
+              data = json.load(f)
+          deps = data if isinstance(data, list) else data.get('dependencies', [])
+          vulns = sum(len(d.get('vulns', [])) for d in deps)
+          print(vulns)
+          ")
+          echo "Vulnerabilities found: $VULN_COUNT"
+          if [ "$VULN_COUNT" -gt 0 ]; then
+            echo "::warning::pip-audit found $VULN_COUNT known vulnerability/ies. Review pip-audit-report.json."
+          fi
 
       - name: Security scan (bandit)
         run: |
@@ -90,4 +107,60 @@ jobs:
         with:
           name: bandit-report
           path: bandit-report.json
+          retention-days: 14
+
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+          retention-days: 14
+
+  frontend-audit:
+    name: Frontend Dependency Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit
+        run: |
+          npm audit --audit-level=critical --json > npm-audit-report.json 2>&1 || true
+          CRIT_COUNT=$(python3 -c "
+          import json, sys
+          try:
+              with open('npm-audit-report.json') as f:
+                  data = json.load(f)
+              vulns = data.get('metadata', {}).get('vulnerabilities', {})
+              print(vulns.get('critical', 0))
+          except Exception:
+              print(0)
+          ")
+          echo "Critical npm vulnerabilities: $CRIT_COUNT"
+          if [ "$CRIT_COUNT" -gt 0 ]; then
+            echo "::error::npm audit found $CRIT_COUNT critical vulnerability/ies."
+            exit 1
+          fi
+
+      - name: Upload npm audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: frontend/npm-audit-report.json
           retention-days: 14

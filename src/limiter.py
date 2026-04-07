@@ -42,8 +42,21 @@ class RateLimiter:
         self._buckets: dict[str, _BucketEntry] = {}
         self._lock = threading.Lock()
 
-    def check(self, key: str, tier: str) -> tuple[bool, int, int]:
+    def check(
+        self,
+        key: str,
+        tier: str,
+        *,
+        max_requests: int | None = None,
+        window: int | None = None,
+    ) -> tuple[bool, int, int]:
         """Test whether *key* may proceed under *tier* limits.
+
+        Parameters:
+            key:           Unique identifier (user_id, IP, etc.).
+            tier:          Tier name looked up in TIER_LIMITS.
+            max_requests:  Override the tier's default limit.
+            window:        Override the default window (seconds).
 
         Returns:
             (allowed, limit, remaining)
@@ -52,13 +65,14 @@ class RateLimiter:
             - remaining: How many requests the caller has left in the current
                          window (0 if blocked).
         """
-        limit = TIER_LIMITS.get(tier)
+        limit = max_requests if max_requests is not None else TIER_LIMITS.get(tier)
         if limit is None:
             # Unknown tier (or admin bypass) — allow unconditionally.
             return True, 0, 0
 
+        effective_window = window if window is not None else WINDOW_SECONDS
         now = time.monotonic()
-        cutoff = now - WINDOW_SECONDS
+        cutoff = now - effective_window
 
         with self._lock:
             entry = self._buckets.setdefault(key, _BucketEntry())
