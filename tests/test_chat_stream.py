@@ -15,6 +15,12 @@ import json
 
 import db
 
+# RBAC requires a valid user with an allowed role. Helper to get the
+# seeded admin's ID for tests that don't care about role granularity.
+def _admin_id():
+    user = db.get_user_by_username("admin")
+    return user["id"]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,7 +42,7 @@ def _parse_sse_events(raw_text: str) -> list[dict]:
 
 class TestSSEStreamFormat:
     def test_stream_returns_token_sources_done(self, chat_client):
-        resp = chat_client.post("/api/chat", json={"question": "What is the capital?"})
+        resp = chat_client.post("/api/chat", json={"question": "What is the capital?", "user_id": _admin_id()})
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
 
@@ -51,7 +57,7 @@ class TestSSEStreamFormat:
         assert types[-1] == "done"
 
     def test_token_events_carry_content(self, chat_client):
-        resp = chat_client.post("/api/chat", json={"question": "Hello?"})
+        resp = chat_client.post("/api/chat", json={"question": "Hello?", "user_id": _admin_id()})
         events = _parse_sse_events(resp.text)
         token_events = [e for e in events if e["type"] == "token"]
         assert len(token_events) >= 1
@@ -62,7 +68,7 @@ class TestSSEStreamFormat:
     def test_sources_are_deduplicated(self, chat_client):
         """The mock retriever returns two chunks from the same file (geo.pdf).
         Source citations should be deduplicated by (filename, page)."""
-        resp = chat_client.post("/api/chat", json={"question": "Capitals?"})
+        resp = chat_client.post("/api/chat", json={"question": "Capitals?", "user_id": _admin_id()})
         events = _parse_sse_events(resp.text)
         source_event = next(e for e in events if e["type"] == "sources")
         sources = source_event["sources"]
@@ -80,13 +86,14 @@ class TestSSEStreamFormat:
 
 class TestSSESessionPersistence:
     def test_messages_persisted_when_session_id_given(self, chat_client):
-        session = db.create_session("testuser", "Test chat")
+        uid = _admin_id()
+        session = db.create_session(uid, "Test chat")
         sid = session["id"]
 
         resp = chat_client.post("/api/chat", json={
             "question": "What is the capital of France?",
             "session_id": sid,
-            "user_id": "testuser",
+            "user_id": uid,
         })
         assert resp.status_code == 200
 
@@ -100,31 +107,34 @@ class TestSSESessionPersistence:
         assert "Hello" in messages[1]["content"]
 
     def test_no_persistence_without_session_id(self, chat_client):
-        resp = chat_client.post("/api/chat", json={"question": "No session"})
+        uid = _admin_id()
+        resp = chat_client.post("/api/chat", json={"question": "No session", "user_id": uid})
         assert resp.status_code == 200
-        # No sessions should have been created (apart from seed data, which has none).
-        sessions = db.get_sessions("anonymous")
+        # No sessions should have been created for this user beyond any existing ones.
+        sessions = db.get_sessions(uid)
         assert len(sessions) == 0
 
     def test_auto_creates_session_if_id_not_found(self, chat_client):
+        uid = _admin_id()
         fake_sid = "auto-created-session-id-123"
         resp = chat_client.post("/api/chat", json={
             "question": "Create session for me",
             "session_id": fake_sid,
-            "user_id": "auto_user",
+            "user_id": uid,
         })
         assert resp.status_code == 200
         # Session should now exist.
         session = db.get_session(fake_sid)
         assert session is not None
-        assert session["user_id"] == "auto_user"
+        assert session["user_id"] == uid
 
     def test_auto_title_from_first_question(self, chat_client):
-        session = db.create_session("u1", "New chat")
+        uid = _admin_id()
+        session = db.create_session(uid, "New chat")
         resp = chat_client.post("/api/chat", json={
             "question": "How does RAG work?",
             "session_id": session["id"],
-            "user_id": "u1",
+            "user_id": uid,
         })
         assert resp.status_code == 200
         updated = db.get_session(session["id"])
@@ -152,7 +162,7 @@ class TestChatWidgetAuth:
         monkeypatch.setattr(api_module, "WIDGET_API_KEY_LEGACY", "real-legacy-key")
         resp = chat_client.post(
             "/api/chat",
-            json={"question": "Hi"},
+            json={"question": "Hi", "user_id": _admin_id()},
             headers={"X-Widget-Key": "wrong-key"},
         )
         assert resp.status_code == 403
@@ -160,7 +170,7 @@ class TestChatWidgetAuth:
     def test_missing_key_rejected_when_legacy_set(self, chat_client, monkeypatch):
         import api as api_module
         monkeypatch.setattr(api_module, "WIDGET_API_KEY_LEGACY", "real-legacy-key")
-        resp = chat_client.post("/api/chat", json={"question": "Hi"})
+        resp = chat_client.post("/api/chat", json={"question": "Hi", "user_id": _admin_id()})
         assert resp.status_code == 403
 
     def test_legacy_key_accepted(self, chat_client, monkeypatch):
@@ -168,7 +178,7 @@ class TestChatWidgetAuth:
         monkeypatch.setattr(api_module, "WIDGET_API_KEY_LEGACY", "my-legacy-key")
         resp = chat_client.post(
             "/api/chat",
-            json={"question": "Hi"},
+            json={"question": "Hi", "user_id": _admin_id()},
             headers={"X-Widget-Key": "my-legacy-key"},
         )
         assert resp.status_code == 200
@@ -181,7 +191,7 @@ class TestChatWidgetAuth:
         db.revoke_api_key(key_data["id"])
         resp = chat_client.post(
             "/api/chat",
-            json={"question": "Hi"},
+            json={"question": "Hi", "user_id": _admin_id()},
             headers={"X-Widget-Key": key_data["raw_key"]},
         )
         assert resp.status_code == 403
@@ -196,6 +206,7 @@ class TestChatHistory:
         """Sending history should not crash — we verify via successful stream."""
         resp = chat_client.post("/api/chat", json={
             "question": "Follow up",
+            "user_id": _admin_id(),
             "history": [
                 {"role": "user", "content": "First question"},
                 {"role": "assistant", "content": "First answer"},

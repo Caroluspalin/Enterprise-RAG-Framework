@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
@@ -73,6 +73,7 @@ from chain import SYSTEM_PROMPT, load_llm
 from limiter import rate_limiter
 from logger import get_logger
 from retriever import get_retriever
+from rbac import require_role
 from security import SecurityHeadersMiddleware
 from vectorstore import get_vector_store, reset_vector_store
 
@@ -415,7 +416,10 @@ def _apply_rate_limit(key: str, tier: str) -> dict[str, str]:
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/api/chat")
+@app.post(
+    "/api/chat",
+    dependencies=[Depends(require_role(["owner", "admin", "member"]))],
+)
 async def chat(request: Request, req: ChatRequest):
     # Validate the X-Widget-Key header to prevent unauthenticated abuse
     # of the LLM.  First check the database for a matching active key,
@@ -458,7 +462,10 @@ async def chat(request: Request, req: ChatRequest):
     )
 
 
-@app.post("/api/upload")
+@app.post(
+    "/api/upload",
+    dependencies=[Depends(require_role(["owner", "admin"]))],
+)
 async def upload(
     request: Request,
     file: UploadFile = File(...),
@@ -557,7 +564,10 @@ def _ingest_pdf(pdf_path: Path, tenant_id: str = DEFAULT_TENANT) -> None:
     log.info("Ingested %s | chunks=%d tenant=%s", pdf_path.name, len(chunks), tenant_id)
 
 
-@app.get("/api/documents")
+@app.get(
+    "/api/documents",
+    dependencies=[Depends(require_role(["owner", "admin", "member", "viewer"]))],
+)
 async def list_documents(request: Request, user_id: str = "anonymous"):
     """Return unique filenames currently in the vector store for the caller's tenant.
 
@@ -598,7 +608,10 @@ async def list_documents(request: Request, user_id: str = "anonymous"):
     return {"documents": documents}
 
 
-@app.delete("/api/documents/{filename}")
+@app.delete(
+    "/api/documents/{filename}",
+    dependencies=[Depends(require_role(["owner", "admin"]))],
+)
 async def delete_document(request: Request, filename: str, user_id: str = "anonymous"):
     """Remove all vector store embeddings for filename within the caller's tenant.
 
@@ -710,7 +723,7 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     name: str
-    role: str = "user"
+    role: str = "member"
 
 
 # Login attempts are rate-limited much more aggressively than chat:

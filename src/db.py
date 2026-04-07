@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS users (
     username        TEXT NOT NULL UNIQUE,
     password_hash   TEXT NOT NULL,
     name            TEXT NOT NULL,
-    role            TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    role            TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
     tier            TEXT NOT NULL DEFAULT 'FREE_USER' CHECK (tier IN ('FREE_USER', 'PRO_USER')),
     organization_id TEXT,
     created_at      TEXT NOT NULL,
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     organization_id TEXT,
     key_hash        TEXT NOT NULL,
     label           TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
     prefix          TEXT NOT NULL,
     is_active       INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL,
@@ -136,12 +137,18 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN organization_id TEXT"
             )
+        # Migrate legacy role values from the old binary system.
+        conn.execute("UPDATE users SET role = 'member' WHERE role = 'user'")
         ak_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()
         }
         if "organization_id" not in ak_cols:
             conn.execute(
                 "ALTER TABLE api_keys ADD COLUMN organization_id TEXT"
+            )
+        if "role" not in ak_cols:
+            conn.execute(
+                "ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'member'"
             )
         al_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(audit_log)").fetchall()
@@ -317,7 +324,7 @@ def create_user(
     username: str,
     password: str,
     name: str,
-    role: str = "user",
+    role: str = "member",
     tier: str = "FREE_USER",
     organization_id: str | None = None,
 ) -> dict:
@@ -431,12 +438,18 @@ def _hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-def create_api_key(user_id: str, label: str, organization_id: str | None = None) -> dict:
+def create_api_key(
+    user_id: str,
+    label: str,
+    organization_id: str | None = None,
+    role: str = "member",
+) -> dict:
     """Generate a cryptographically secure API key for a user.
 
     The raw key is returned ONCE in the response.  Only its SHA-256 hash
     is stored in the database — the plaintext cannot be recovered later.
     When organization_id is provided, the key is bound to that tenant.
+    The role determines what RBAC permissions requests using this key have.
     """
     key_id = uuid4().hex
     raw_key = "rag_" + secrets.token_urlsafe(32)
@@ -447,14 +460,15 @@ def create_api_key(user_id: str, label: str, organization_id: str | None = None)
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO api_keys (id, user_id, organization_id, key_hash, label, prefix, is_active, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
-            (key_id, user_id, organization_id, key_hash, label, prefix, now),
+            "INSERT INTO api_keys (id, user_id, organization_id, key_hash, label, role, prefix, is_active, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (key_id, user_id, organization_id, key_hash, label, role, prefix, now),
         )
     return {
         "id": key_id,
         "raw_key": raw_key,   # Shown to the user once, never stored
         "label": label,
+        "role": role,
         "prefix": prefix,
         "is_active": True,
         "created_at": now,
@@ -498,7 +512,7 @@ def verify_api_key(raw_key: str) -> dict | None:
     key_hash = _hash_api_key(raw_key)
     with _connect() as conn:
         row = conn.execute(
-            "SELECT user_id, label, organization_id FROM api_keys "
+            "SELECT user_id, label, organization_id, role FROM api_keys "
             "WHERE key_hash = ? AND is_active = 1",
             (key_hash,),
         ).fetchone()

@@ -65,9 +65,9 @@ class TestUsers:
         assert users[0]["role"] == "admin"
 
     def test_create_user(self):
-        user = db.create_user("alice", "password123", "Alice", "user")
+        user = db.create_user("alice", "password123", "Alice", "member")
         assert user["username"] == "alice"
-        assert user["role"] == "user"
+        assert user["role"] == "member"
         assert "password_hash" not in user
 
     def test_create_duplicate_username_raises(self):

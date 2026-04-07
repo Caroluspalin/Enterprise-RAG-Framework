@@ -40,7 +40,7 @@ class TestRegister:
         assert resp.status_code == 200
         data = resp.json()
         assert data["username"] == "newuser"
-        assert data["role"] == "user"
+        assert data["role"] == "member"
 
     def test_register_duplicate_username(self, client):
         resp = client.post("/api/auth/register", json={

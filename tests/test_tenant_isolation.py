@@ -43,10 +43,10 @@ def two_tenants():
     org_a = db.create_organization("Acme Corp")
     org_b = db.create_organization("Globex Inc")
     user_a = db.create_user(
-        "alice", "password1", "Alice", organization_id=org_a["id"],
+        "alice", "password1", "Alice", role="admin", organization_id=org_a["id"],
     )
     user_b = db.create_user(
-        "bob", "password2", "Bob", organization_id=org_b["id"],
+        "bob", "password2", "Bob", role="admin", organization_id=org_b["id"],
     )
     return {
         "org_a": org_a, "org_b": org_b,
@@ -164,14 +164,18 @@ class TestDocumentListIsolation:
         assert "beta.pdf" in names
         assert "alpha.pdf" not in names
 
-    def test_anonymous_user_sees_default_tenant_only(self, tenant_client):
+    def test_orgless_user_sees_default_tenant_only(self, tenant_client):
+        """A user without an organization_id falls back to the default tenant."""
         client, store, mock_embed, tenants = tenant_client
         org_a_id = tenants["org_a"]["id"]
+
+        # Create a user with no organisation — they should see default tenant.
+        orgless = db.create_user("orgless", "pass", "Orgless", role="viewer")
 
         _seed_docs(store, mock_embed, org_a_id, ["secret.pdf"])
         _seed_docs(store, mock_embed, "default", ["public.pdf"])
 
-        resp = client.get("/api/documents")
+        resp = client.get("/api/documents", params={"user_id": orgless["id"]})
         names = [d["name"] for d in resp.json()["documents"]]
         assert "public.pdf" in names
         assert "secret.pdf" not in names

@@ -80,6 +80,36 @@ def admin_headers():
     return {"Authorization": f"Bearer {TEST_ADMIN_SECRET}"}
 
 
+@pytest.fixture()
+def admin_user():
+    """Return the default seeded admin user (role='admin')."""
+    import db
+    user = db.get_user_by_username("admin")
+    assert user is not None
+    return user
+
+
+@pytest.fixture()
+def member_user():
+    """Create and return a user with 'member' role for RBAC tests."""
+    import db
+    return db.create_user("testmember", "pass", "Test Member", role="member")
+
+
+@pytest.fixture()
+def viewer_user():
+    """Create and return a user with 'viewer' role for RBAC tests."""
+    import db
+    return db.create_user("testviewer", "pass", "Test Viewer", role="viewer")
+
+
+@pytest.fixture()
+def owner_user():
+    """Create and return a user with 'owner' role for RBAC tests."""
+    import db
+    return db.create_user("testowner", "pass", "Test Owner", role="owner")
+
+
 # ---------------------------------------------------------------------------
 # chat_client — shared fixture for tests that need a working mock LLM chain
 # ---------------------------------------------------------------------------

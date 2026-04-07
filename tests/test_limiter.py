@@ -85,23 +85,29 @@ class TestRateLimiterUnit:
 class TestRateLimitIntegration:
     """Test that the rate limiter is wired into the /api/chat endpoint."""
 
+    def _admin_id(self):
+        import db
+        return db.get_user_by_username("admin")["id"]
+
     def test_chat_returns_rate_limit_headers(self, chat_client):
-        resp = chat_client.post("/api/chat", json={"question": "Hi"})
+        resp = chat_client.post("/api/chat", json={"question": "Hi", "user_id": self._admin_id()})
         assert resp.status_code == 200
         assert "X-RateLimit-Limit" in resp.headers
         assert "X-RateLimit-Remaining" in resp.headers
 
     def test_chat_returns_429_after_free_limit(self, chat_client):
-        """Anonymous user defaults to FREE_USER (5/min).  The 6th request
+        """A member user defaults to FREE_USER (5/min).  The 6th request
         should return 429."""
+        import db
         from limiter import rate_limiter, TIER_LIMITS
         rate_limiter.reset()
 
+        member = db.create_user("ratelimited", "pass", "RL User", role="member")
         limit = TIER_LIMITS["FREE_USER"]
         for _ in range(limit):
-            resp = chat_client.post("/api/chat", json={"question": "Hi"})
+            resp = chat_client.post("/api/chat", json={"question": "Hi", "user_id": member["id"]})
             assert resp.status_code == 200
 
-        resp = chat_client.post("/api/chat", json={"question": "One too many"})
+        resp = chat_client.post("/api/chat", json={"question": "One too many", "user_id": member["id"]})
         assert resp.status_code == 429
         assert "Rate limit" in resp.json()["detail"]
