@@ -55,6 +55,7 @@ from db import (
     get_session,
     get_sessions,
     get_user_by_username,
+    init_db,
     list_api_keys,
     list_users,
     revoke_api_key,
@@ -110,10 +111,21 @@ Context:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Initialise the database (tables + default admin seed) at startup."""
+    init_db()
+    yield
+
+
 # Rate limiter keyed by client IP address.
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="B2B RAG API", version="1.0.0")
+app = FastAPI(title="B2B RAG API", version="1.0.0", lifespan=lifespan)
 app.state.limiter = limiter
 
 

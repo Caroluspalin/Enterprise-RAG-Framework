@@ -455,7 +455,3 @@ def get_analytics(days: int = 30) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Initialise on import so tables exist before the API serves requests.
-# ---------------------------------------------------------------------------
-init_db()
