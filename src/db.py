@@ -90,9 +90,11 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create tables and indexes if they don't already exist."""
+    """Create tables and indexes if they don't already exist, then seed the
+    default admin user so the app is usable on first run."""
     with _connect() as conn:
         conn.executescript(_SCHEMA_SQL)
+    _seed_default_admin()
 
 
 # ---------------------------------------------------------------------------
@@ -457,4 +459,3 @@ def get_analytics(days: int = 30) -> dict:
 # Initialise on import so tables exist before the API serves requests.
 # ---------------------------------------------------------------------------
 init_db()
-_seed_default_admin()

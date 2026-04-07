@@ -119,8 +119,8 @@
 - [ ] E2E-testit (Playwright): login-flow, chat-viesti lähetetään ja vastaus renderöityy, session-historia latautuu, admin-paneelin tab-navigointi, PDF-upload, widget-näkymä latautuu
 
 **CI/CD-pipeline (GitHub Actions)**
-- [ ] Luo `.github/workflows/ci.yml`: käynnistyy `push`- ja `pull_request`-eventeillä
-- [ ] Backend-vaihe: Python-setup, `pip install`, `pytest --cov` — pipeline feilaa jos testit eivät mene läpi
+- [x] Luo `.github/workflows/ci.yml`: käynnistyy `push`- ja `pull_request`-eventeillä
+- [x] Backend-vaihe: Python-setup, `pip install`, `pytest --cov` — pipeline feilaa jos testit eivät mene läpi
 - [ ] Frontend-vaihe: Node-setup, `npm ci`, `npm run lint`, `vitest run`, `npm run build` — pipeline feilaa jos buildi ei onnistu
 - [ ] E2E-vaihe: Playwright-testit headless-chromella (ajetaan vain `main`-branchissa tai PR-mergessä)
 - [ ] Branch protection -sääntö: `main`-branchiin ei voi pushata ilman vihreää CI-statusta
