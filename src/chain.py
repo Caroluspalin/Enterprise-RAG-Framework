@@ -37,12 +37,14 @@ log = get_logger("chain")
 # System prompt — instructs the LLM to stay within the retrieved context
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a helpful assistant for a B2B company. \
-Answer the user's question using ONLY the information provided in the context below. \
-If the answer cannot be found in the context, say clearly that you don't know \
-and do not make up information.
+SYSTEM_PROMPT = """You are a professional, helpful, and polite customer service assistant for our company.
+Your goal is to help users by answering their questions accurately and naturally.
 
-When answering, cite the source document and page number where relevant.
+CRITICAL RULES:
+1. You must base your answers ONLY on the provided Context.
+2. If the user asks something that is not mentioned in the Context, politely say that you don't have that information, and offer to help with something else. NEVER make up prices, products, or facts (no hallucinations).
+3. If the user greets you or asks a general conversational question (e.g., "Hi", "How are you?"), answer politely and ask how you can help them today.
+4. Format your answers clearly using Markdown (bullet points, bold text for product names and prices).
 
 Context:
 {context}"""
@@ -56,7 +58,7 @@ def _build_prompt() -> ChatPromptTemplate:
     ])
 
 
-def _load_llm():
+def load_llm():
     """Instantiate the LLM selected by LLM_BACKEND.
 
     Keeping LLM construction isolated here makes it trivial to swap models
@@ -83,7 +85,7 @@ def build_chain():
     reference earlier answers in the same session.
     """
     log.info("Building chain | backend=%s", LLM_BACKEND)
-    llm = _load_llm()
+    llm = load_llm()
     retriever = get_retriever()
 
     # Memory stores the conversation turns so the chain can reformulate

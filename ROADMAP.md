@@ -153,11 +153,13 @@
 - [ ] Admin-paneeliin uusi "Quality"-tab: huonoiten arvioidut vastaukset, palautetrendi, mahdollisuus tarkastella yksittäistä keskustelua kontekstissa
 
 **Automatisoitu evaluaatio-pipeline**
-- [ ] Luo `evaluation/` -hakemisto ja `evaluation/golden_set.json`: vähintään 30 kysymys–vastaus–lähde -kolmikkoa, jotka kattavat projektin dokumenttien sisällön
-- [ ] Evaluaatioskripti (`evaluation/evaluate.py`): ajaa golden set -kysymykset RAG-ketjun läpi ja laskee metrikat
-- [ ] Metrikat: answer relevancy (vastauksen osuvuus), faithfulness (vastaus perustuu kontekstiin, ei hallusinoi), context precision (haetut chunkit ovat relevantteja), context recall (kaikki tarvittavat chunkit löytyvät)
-- [ ] Ragas- tai TruLens-integraatio metrikoiden laskentaan (valitse toinen, älä molempia)
-- [ ] Evaluaatioraportti tallennetaan JSON-muotoon: jokainen kysymys, saatu vastaus, metrikat, käytetyt lähteet
+- [x] Evaluaatioskripti (`scripts/evaluate.py`): ajaa golden set -kysymykset RAG-ketjun läpi ja laskee metrikat
+- [x] Metrikat: answer relevancy (vastauksen osuvuus), faithfulness (vastaus perustuu kontekstiin, ei hallusinoi)
+- [x] Ragas-integraatio metrikoiden laskentaan (LangchainLLMWrapper + LangchainEmbeddingsWrapper)
+- [x] Golden dataset: 5 TechCorp-dokumentin faktoihin perustuvaa kysymys-vastaus-paria
+- [x] Evaluaatioraportti tallennetaan JSON-muotoon (`eval_results.json`): jokainen kysymys, saatu vastaus, metrikat
+- [ ] Golden datasetin laajentaminen 30 kysymykseen kattamaan kaikki dokumenttien osa-alueet
+- [ ] Lisämetrikat: context precision, context recall
 - [ ] GitHub Actions -integraatio: evaluaatio ajetaan CI:ssä ja raportti arkistoidaan artifaktina; pipeline varoittaa (mutta ei feilaa) jos faithfulness-keskiarvo laskee alle kynnysarvon
 
 **Chunkkaus-strategian optimointi**

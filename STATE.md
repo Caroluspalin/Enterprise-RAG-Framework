@@ -4,15 +4,15 @@ Paivitetty: 2026-04-07
 
 ## Viimeksi tehty
 
-- GitHub Actions CI/CD -pipeline vihreana tuotannossa (`.github/workflows/ci.yml`)
-  - Laukeaa `push` ja `pull_request` -eventeilla `master`-haaraan
-  - `ubuntu-latest`, Python 3.11, pip-cache
-  - Asentaa `requirements.txt` + pytest, pytest-mock, pytest-cov, httpx, bandit, fpdf2
-  - Bandit-tietoturvaskannaus: feilaa buildin High-tason haavoittuvuuksista
-  - Pytest + coverage-raportti (XML-artifakti, 14 pv retention)
-  - Dummy-ymparistomuuttujat — testit toimivat ilman oikeita API-avaimia
-- Arkkitehtuurikorjaus: `db.py` ei enaa suorita `init_db()` importissa — siirretty FastAPI lifespan-eventiin (`api.py`). Poistaa import-sivuvaikutuksen joka kaatoi CI:n.
-- 104 backend-testia vihrealla, kokonaiskattavuus 82 %
+- Phase 11 evaluaatioputki valmis (`scripts/evaluate.py`)
+  - Ragas-integraatio: Faithfulness + Answer Relevancy -metrikat
+  - Eksplisiittinen LLM (ChatOpenAI gpt-4o) ja embedding-malli (text-embedding-3-small) Ragasille
+  - Golden dataset: 5 TechCorp-dokumentin faktoihin perustuvaa kysymys-vastaus-paria
+  - Tulokset tallennetaan `eval_results.json` -tiedostoon
+  - Faithfulness: 1.0 (taydellinen), Answer Relevancy: numeerinen tulos (ei enaa NaN)
+- Phase 10 CI/CD vihreana: GitHub Actions (`ci.yml`), Bandit-skannaus, pytest + coverage
+- Arkkitehtuurikorjaus: `db.py` init_db() siirretty FastAPI lifespan-eventiin
+- README.md paivitetty: CI-badge, uudet asennus- ja testiohjeet
 
 ## Tunnetut ongelmat / Keskeneraiset asiat
 
@@ -22,6 +22,7 @@ Paivitetty: 2026-04-07
 - `api.py` coverage 68 % — upload-, documents-, delete-endpointit testaamatta
 - CI/CD: frontend-vaihe, E2E-vaihe, branch protection ja Dependabot viela tekematta
 - Frontend-testit (Vitest, Playwright) puuttuvat
+- Phase 11 keskeneraiset: golden datasetin laajennus 30 kysymykseen, context precision/recall -metrikat, CI-integraatio
 
 ## Deployment-ymparistomuuttujat
 
@@ -46,4 +47,4 @@ Paivitetty: 2026-04-07
 
 ## Seuraava looginen askel
 
-Phase 11: LLM-vastausten evaluaatioputken (Ragas tai TruLens) perustan pystytys testikysymyksilla ja automaattisella laatumittauksella.
+Phase 12: Infrastructure & Security Scaling — vektoritietokannan abstraktiokerros, audit-logitus, rate limiting -parannus ja tietoturvan koventaminen.

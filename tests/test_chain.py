@@ -45,7 +45,7 @@ class TestBuildPrompt:
 
 
 # ---------------------------------------------------------------------------
-# _load_llm — backend selection
+# load_llm — backend selection
 # ---------------------------------------------------------------------------
 
 class TestLoadLlm:
@@ -53,8 +53,8 @@ class TestLoadLlm:
         monkeypatch.setattr(chain_module, "LLM_BACKEND", "openai")
         mock_cls = MagicMock()
         with patch("langchain_openai.ChatOpenAI", mock_cls):
-            from chain import _load_llm
-            _load_llm()
+            from chain import load_llm
+            load_llm()
             mock_cls.assert_called_once()
 
     def test_anthropic_backend(self, monkeypatch):
@@ -62,8 +62,8 @@ class TestLoadLlm:
         import sys
         mock_anthropic = MagicMock()
         sys.modules["langchain_anthropic"] = mock_anthropic
-        from chain import _load_llm
-        _load_llm()
+        from chain import load_llm
+        load_llm()
         mock_anthropic.ChatAnthropic.assert_called_once()
 
     def test_ollama_backend(self, monkeypatch):
@@ -71,8 +71,8 @@ class TestLoadLlm:
         import sys
         mock_ollama = MagicMock()
         sys.modules["langchain_ollama"] = mock_ollama
-        from chain import _load_llm
-        _load_llm()
+        from chain import load_llm
+        load_llm()
         mock_ollama.ChatOllama.assert_called_once()
 
 
@@ -163,7 +163,7 @@ class TestBuildChain:
 
         fake_llm = FakeListLLM(responses=["test answer"])
 
-        with patch("chain._load_llm", return_value=fake_llm), \
+        with patch("chain.load_llm", return_value=fake_llm), \
              patch("chain.get_retriever", return_value=FakeRetriever()):
             from chain import build_chain
             c = build_chain()

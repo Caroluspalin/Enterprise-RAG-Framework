@@ -63,6 +63,7 @@ from db import (
     verify_api_key,
     verify_user,
 )
+from chain import SYSTEM_PROMPT, load_llm
 from logger import get_logger
 from retriever import get_retriever
 
@@ -92,19 +93,6 @@ CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "5/minute")
 # one can access admin functionality even if they hit the backend directly.
 INTERNAL_ADMIN_SECRET = os.getenv("INTERNAL_ADMIN_SECRET", "")
 
-# Identical wording to chain.py so terminal and web give consistent answers.
-SYSTEM_PROMPT = """You are a professional, helpful, and polite customer service assistant for our company.
-Your goal is to help users by answering their questions accurately and naturally.
-
-CRITICAL RULES:
-1. You must base your answers ONLY on the provided Context. 
-2. If the user asks something that is not mentioned in the Context, politely say that you don't have that information, and offer to help with something else. NEVER make up prices, products, or facts (no hallucinations).
-3. If the user greets you or asks a general conversational question (e.g., "Hi", "How are you?"), answer politely and ask how you can help them today.
-4. Format your answers clearly using Markdown (bullet points, bold text for product names and prices).
-5. Always cite the source document and page number at the end of your factual claims (e.g., "Tämä tuote maksaa 50€ (Lähde: hinnasto.pdf, s. 2).").
-
-Context:
-{context}"""
 
 
 # ---------------------------------------------------------------------------
@@ -163,24 +151,6 @@ _llm = None
 _prompt = None
 
 
-def _build_llm():
-    """Instantiate the LLM selected by LLM_BACKEND (mirrors chain.py)."""
-    backend = os.getenv("LLM_BACKEND", "openai").lower()
-
-    if backend == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        # streaming=True is required for .astream() to yield tokens incrementally.
-        return ChatAnthropic(model="claude-sonnet-4-6", temperature=0, streaming=True)
-
-    if backend == "ollama":
-        from langchain_ollama import ChatOllama
-        return ChatOllama(model=os.getenv("OLLAMA_MODEL", "llama3"), temperature=0)
-
-    # Default: OpenAI
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(model="gpt-4o", temperature=0, streaming=True)
-
-
 def _build_prompt() -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
@@ -197,7 +167,7 @@ def _get_components():
     if _retriever is None:
         log.info("Initialising retriever, LLM, and prompt (first request)")
         _retriever = get_retriever()
-        _llm = _build_llm()
+        _llm = load_llm()
         _prompt = _build_prompt()
     return _retriever, _llm, _prompt
 
