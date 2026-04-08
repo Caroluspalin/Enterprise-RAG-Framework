@@ -59,13 +59,38 @@ def _normalise_url(url: str) -> str:
     # Query params are kept intentionally — different pages may live at ?page=2
 
 
+def _fetch_html(url: str) -> str | None:
+    """Download HTML from a URL, trying trafilatura first then urllib fallback.
+
+    Some hosting environments (e.g. Render free tier) have restricted
+    networking that causes trafilatura's fetcher to fail silently.
+    The urllib fallback ensures we can always reach public sites.
+    """
+    # Try trafilatura's built-in fetcher first.
+    html = trafilatura.fetch_url(url)
+    if html:
+        return html
+
+    # Fallback: plain urllib with a browser-like User-Agent.
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; RAGBot/1.0)",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        log.warning("Failed to fetch %s: %s", url, exc)
+        return None
+
+
 def fetch_and_extract(url: str) -> str | None:
     """Download a URL and extract the main text content using trafilatura.
 
     Returns the extracted text or None if the page could not be fetched or
     contained no usable content.
     """
-    downloaded = trafilatura.fetch_url(url)
+    downloaded = _fetch_html(url)
     if not downloaded:
         log.warning("Failed to fetch: %s", url)
         return None
@@ -82,12 +107,9 @@ def discover_links(url: str) -> list[str]:
     Uses trafilatura's built-in link extraction to find internal links
     without pulling in an extra dependency like BeautifulSoup.
     """
-    downloaded = trafilatura.fetch_url(url)
+    downloaded = _fetch_html(url)
     if not downloaded:
         return []
-    # trafilatura.extract with output_format="xml" includes links, but
-    # for link discovery we use its sitemap/spider utilities or fall back
-    # to basic HTML parsing.
     from html.parser import HTMLParser
 
     links: list[str] = []
