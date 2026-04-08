@@ -71,7 +71,7 @@ export interface User {
   id: string;
   username: string;
   name: string;
-  role: "user" | "admin";
+  role: "owner" | "admin" | "member" | "viewer";
   created_at: string;
 }
 
