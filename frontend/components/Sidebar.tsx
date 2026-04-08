@@ -23,7 +23,7 @@ export default function Sidebar({
 }: SidebarProps) {
   const { data: session } = useSession();
   const isAdmin = (session?.user as { role?: string })?.role === "admin";
-  const userId = session?.user?.email ?? "anonymous";
+  const userId = (session?.user as { id?: string })?.id ?? "anonymous";
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
@@ -31,15 +31,19 @@ export default function Sidebar({
   const [loadingSessions, setLoadingSessions] = useState(true);
 
   const fetchDocs = useCallback(async () => {
+    if (userId === "anonymous") {
+      setLoadingDocs(false);
+      return;
+    }
     try {
-      const docs = await listDocuments();
+      const docs = await listDocuments(userId);
       setDocuments(docs);
     } catch {
       // Backend may not be running yet during development.
     } finally {
       setLoadingDocs(false);
     }
-  }, []);
+  }, [userId]);
 
   const fetchSessions = useCallback(async () => {
     try {

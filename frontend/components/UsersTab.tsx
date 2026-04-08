@@ -12,7 +12,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [role, setRole] = useState<"user" | "admin">("user");
+  const [role, setRole] = useState<"owner" | "admin" | "member" | "viewer">("member");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -87,11 +87,13 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <span className="text-xs text-slate-400">Role</span>
           <select
             value={role}
-            onChange={(e) => setRole(e.target.value as "user" | "admin")}
+            onChange={(e) => setRole(e.target.value as "owner" | "admin" | "member" | "viewer")}
             className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
           >
-            <option value="user">User</option>
+            <option value="member">Member</option>
             <option value="admin">Admin</option>
+            <option value="viewer">Viewer</option>
+            <option value="owner">Owner</option>
           </select>
         </label>
 
@@ -291,9 +293,13 @@ export default function UsersTab() {
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        user.role === "admin"
-                          ? "bg-amber-900/50 text-amber-300"
-                          : "bg-slate-800 text-slate-400"
+                        user.role === "owner"
+                          ? "bg-purple-900/50 text-purple-300"
+                          : user.role === "admin"
+                            ? "bg-amber-900/50 text-amber-300"
+                            : user.role === "viewer"
+                              ? "bg-slate-700/50 text-slate-500"
+                              : "bg-slate-800 text-slate-400"
                       }`}
                     >
                       {user.role}

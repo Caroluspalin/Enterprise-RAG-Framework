@@ -90,6 +90,29 @@ class ChromaVectorStore(BaseVectorStore):
         self._collection_name = collection_name or os.getenv("COLLECTION_NAME", "b2b_docs")
         self._client = PersistentClient(path=str(self._chroma_path))
         self._collection = self._client.get_or_create_collection(self._collection_name)
+        self._migrate_legacy_tenant_ids()
+
+    def _migrate_legacy_tenant_ids(self) -> None:
+        """Stamp tenant_id='default' on chunks ingested before multi-tenancy.
+
+        Pre-Phase 12 chunks were stored without a tenant_id field, so
+        tenant-scoped queries never find them.  This one-time migration
+        patches their metadata in place.
+        """
+        results = self._collection.get(include=["metadatas"])
+        ids_to_update: list[str] = []
+        metas_to_update: list[dict] = []
+        for doc_id, meta in zip(results["ids"], results["metadatas"]):
+            if meta.get("tenant_id") is None:
+                meta["tenant_id"] = "default"
+                ids_to_update.append(doc_id)
+                metas_to_update.append(meta)
+        if ids_to_update:
+            self._collection.update(ids=ids_to_update, metadatas=metas_to_update)
+            log.info(
+                "Migrated %d legacy chunks to tenant_id='default'",
+                len(ids_to_update),
+            )
 
     def add_documents(
         self,
