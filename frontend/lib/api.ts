@@ -46,7 +46,7 @@ export async function* streamChat(
     headers["X-Widget-Key"] = widgetKey;
   }
 
-  const res = await fetch("/api/chat", {
+  const res = await fetch("/api/v1/chat", {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -96,17 +96,24 @@ export async function* streamChat(
 // Documents
 // ---------------------------------------------------------------------------
 
-export async function listDocuments(): Promise<Document[]> {
-  const res = await fetch("/api/documents");
+export async function listDocuments(userId?: string): Promise<Document[]> {
+  const url = userId
+    ? `/api/v1/documents?user_id=${encodeURIComponent(userId)}`
+    : "/api/v1/documents";
+  const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to fetch document list");
   const data = await res.json();
   return data.documents as Document[];
 }
 
 export async function deleteDocument(
-  filename: string
+  filename: string,
+  userId?: string,
 ): Promise<{ message: string; chunks_removed: number }> {
-  const res = await fetch(`/api/documents/${encodeURIComponent(filename)}`, {
+  const url = userId
+    ? `/api/v1/documents/${encodeURIComponent(filename)}?user_id=${encodeURIComponent(userId)}`
+    : `/api/v1/documents/${encodeURIComponent(filename)}`;
+  const res = await fetch(url, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -128,7 +135,7 @@ export async function createSession(
   userId: string,
   title?: string,
 ): Promise<ChatSession> {
-  const res = await fetch("/api/chat/sessions", {
+  const res = await fetch("/api/v1/chat/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_id: userId, title: title ?? "New chat" }),
@@ -139,7 +146,7 @@ export async function createSession(
 
 export async function getSessions(userId: string): Promise<ChatSession[]> {
   const res = await fetch(
-    `/api/chat/sessions?user_id=${encodeURIComponent(userId)}`,
+    `/api/v1/chat/sessions?user_id=${encodeURIComponent(userId)}`,
   );
   if (!res.ok) throw new Error("Failed to fetch sessions");
   const data = await res.json();
@@ -149,14 +156,14 @@ export async function getSessions(userId: string): Promise<ChatSession[]> {
 export async function getSessionMessages(
   sessionId: string,
 ): Promise<{ session: ChatSession; messages: PersistedMessage[] }> {
-  const res = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}`);
+  const res = await fetch(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`);
   if (!res.ok) throw new Error("Failed to fetch session messages");
   return res.json();
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
   const res = await fetch(
-    `/api/chat/sessions/${encodeURIComponent(sessionId)}`,
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`,
     { method: "DELETE" },
   );
   if (!res.ok) throw new Error("Failed to delete session");
@@ -170,8 +177,11 @@ export async function deleteSession(sessionId: string): Promise<void> {
 // Analytics
 // ---------------------------------------------------------------------------
 
-export async function fetchAnalytics(days: number = 30): Promise<AnalyticsData> {
-  const res = await fetch(`/api/analytics?days=${days}`);
+export async function fetchAnalytics(days: number = 30, userId?: string): Promise<AnalyticsData> {
+  const url = userId
+    ? `/api/v1/analytics?days=${days}&user_id=${encodeURIComponent(userId)}`
+    : `/api/v1/analytics?days=${days}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to fetch analytics");
   return res.json();
 }
@@ -180,11 +190,14 @@ export async function fetchAnalytics(days: number = 30): Promise<AnalyticsData> 
 // Upload
 // ---------------------------------------------------------------------------
 
-export async function uploadPDF(file: File): Promise<{ message: string }> {
+export async function uploadPDF(file: File, userId?: string): Promise<{ message: string }> {
   const form = new FormData();
   form.append("file", file);
+  // Backend RBAC resolves role from user_id (form field → DB lookup).
+  // Without this, the upload endpoint returns 403 for non-anonymous roles.
+  if (userId) form.append("user_id", userId);
 
-  const res = await fetch("/api/upload", {
+  const res = await fetch("/api/v1/upload", {
     method: "POST",
     body: form,
   });

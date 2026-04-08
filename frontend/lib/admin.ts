@@ -7,8 +7,8 @@
  * Actions).  They inject the INTERNAL_ADMIN_SECRET into every request to the
  * FastAPI backend.  The secret is NEVER exposed to the browser.
  *
- * The browser calls Next.js API routes (/api/admin/*), which call these
- * functions, which call FastAPI (/api/admin/*).  Two hops, but the secret
+ * The browser calls Next.js API routes (/api/v1/admin/*), which call these
+ * functions, which call FastAPI (/api/v1/admin/*).  Two hops, but the secret
  * stays server-side.
  */
 
@@ -39,7 +39,7 @@ async function unwrap<T>(res: Response): Promise<T> {
 // ---------------------------------------------------------------------------
 
 export async function listUsers(): Promise<User[]> {
-  const res = await fetch(`${BACKEND_URL}/api/admin/users`, {
+  const res = await fetch(`${BACKEND_URL}/api/v1/admin/users`, {
     headers: adminHeaders(),
   });
   const data = await unwrap<{ users: User[] }>(res);
@@ -57,7 +57,7 @@ export async function createUser(
   // endpoint does not require admin auth (it was designed for self-signup),
   // so we call it directly.  The admin UI is the only place that exposes
   // this — the route is not in Next.js rewrites for the browser.
-  const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
+  const res = await fetch(`${BACKEND_URL}/api/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password, name, role }),
@@ -66,7 +66,7 @@ export async function createUser(
 }
 
 export async function deleteUser(userId: string): Promise<void> {
-  const res = await fetch(`${BACKEND_URL}/api/admin/users/${userId}`, {
+  const res = await fetch(`${BACKEND_URL}/api/v1/admin/users/${userId}`, {
     method: "DELETE",
     headers: adminHeaders(),
   });
@@ -79,7 +79,7 @@ export async function changePassword(
   newPassword: string,
 ): Promise<void> {
   const res = await fetch(
-    `${BACKEND_URL}/api/admin/users/${userId}/change-password`,
+    `${BACKEND_URL}/api/v1/admin/users/${userId}/change-password`,
     {
       method: "POST",
       headers: adminHeaders(),
@@ -98,7 +98,7 @@ export async function changePassword(
 
 export async function listApiKeys(userId: string): Promise<ApiKey[]> {
   const res = await fetch(
-    `${BACKEND_URL}/api/admin/api-keys?user_id=${encodeURIComponent(userId)}`,
+    `${BACKEND_URL}/api/v1/admin/api-keys?user_id=${encodeURIComponent(userId)}`,
     { headers: adminHeaders() },
   );
   const data = await unwrap<{ api_keys: ApiKey[] }>(res);
@@ -109,7 +109,7 @@ export async function createApiKey(
   userId: string,
   label: string,
 ): Promise<ApiKeyWithSecret> {
-  const res = await fetch(`${BACKEND_URL}/api/admin/api-keys`, {
+  const res = await fetch(`${BACKEND_URL}/api/v1/admin/api-keys`, {
     method: "POST",
     headers: adminHeaders(),
     body: JSON.stringify({ user_id: userId, label }),
@@ -118,7 +118,7 @@ export async function createApiKey(
 }
 
 export async function revokeApiKey(keyId: string): Promise<void> {
-  const res = await fetch(`${BACKEND_URL}/api/admin/api-keys/${keyId}`, {
+  const res = await fetch(`${BACKEND_URL}/api/v1/admin/api-keys/${keyId}`, {
     method: "DELETE",
     headers: adminHeaders(),
   });

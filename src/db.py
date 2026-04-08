@@ -135,47 +135,100 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def init_db() -> None:
-    """Create tables and indexes if they don't already exist, then seed the
-    default admin user so the app is usable on first run."""
-    with _connect() as conn:
-        conn.executescript(_SCHEMA_SQL)
-        # Migrations for databases created before multi-tenant support.
-        user_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
-        }
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    """Idempotently add columns and fix constraints introduced after the initial schema.
+
+    This MUST run before executescript() because the schema SQL contains
+    CREATE INDEX statements that reference columns like organization_id.
+    If those columns are missing on an older database the index DDL raises
+    'no such column' even though 'CREATE INDEX IF NOT EXISTS' would otherwise
+    be a no-op.
+
+    SQLite does not support ALTER COLUMN, so changing a CHECK constraint
+    requires a full table recreation (the standard SQLite migration pattern).
+    """
+    user_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    }
+    # Only migrate if the table already exists (not a fresh install).
+    if user_cols:
         if "tier" not in user_cols:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN tier TEXT NOT NULL DEFAULT 'FREE_USER'"
             )
         if "organization_id" not in user_cols:
-            conn.execute(
-                "ALTER TABLE users ADD COLUMN organization_id TEXT"
-            )
-        # Migrate legacy role values from the old binary system.
-        conn.execute("UPDATE users SET role = 'member' WHERE role = 'user'")
-        ak_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()
-        }
+            conn.execute("ALTER TABLE users ADD COLUMN organization_id TEXT")
+
+        # The original schema used CHECK (role IN ('user', 'admin')).
+        # The new schema uses ('owner', 'admin', 'member', 'viewer').
+        # We detect the old constraint by checking whether 'owner' is absent
+        # from the stored CREATE TABLE SQL, then recreate the table.
+        schema_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        has_old_constraint = schema_row and "'owner'" not in (schema_row[0] or "")
+
+        if has_old_constraint:
+            # Recreate users with the new CHECK constraint, converting
+            # 'user' → 'member' during the data copy.
+            # PRAGMA foreign_keys = OFF suppresses FK violations during DROP/RENAME.
+            # executescript() issues an implicit COMMIT first, which persists the
+            # preceding ALTER TABLE ADD COLUMN statements.
+            conn.executescript("""
+                PRAGMA foreign_keys = OFF;
+
+                CREATE TABLE users_new (
+                    id              TEXT PRIMARY KEY,
+                    username        TEXT NOT NULL UNIQUE,
+                    password_hash   TEXT NOT NULL,
+                    name            TEXT NOT NULL,
+                    role            TEXT NOT NULL DEFAULT 'member'
+                                        CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+                    tier            TEXT NOT NULL DEFAULT 'FREE_USER'
+                                        CHECK (tier IN ('FREE_USER', 'PRO_USER')),
+                    organization_id TEXT,
+                    created_at      TEXT NOT NULL
+                );
+
+                INSERT INTO users_new
+                    SELECT id, username, password_hash, name,
+                           CASE WHEN role = 'user' THEN 'member' ELSE role END,
+                           COALESCE(tier, 'FREE_USER'),
+                           organization_id,
+                           created_at
+                    FROM users;
+
+                DROP TABLE users;
+                ALTER TABLE users_new RENAME TO users;
+
+                PRAGMA foreign_keys = ON;
+            """)
+        else:
+            # Constraint is already up to date — just normalise any stale values.
+            conn.execute("UPDATE users SET role = 'member' WHERE role = 'user'")
+
+    ak_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(api_keys)").fetchall()
+    }
+    if ak_cols:
         if "organization_id" not in ak_cols:
-            conn.execute(
-                "ALTER TABLE api_keys ADD COLUMN organization_id TEXT"
-            )
+            conn.execute("ALTER TABLE api_keys ADD COLUMN organization_id TEXT")
         if "role" not in ak_cols:
             conn.execute(
                 "ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'member'"
             )
-        al_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(audit_log)").fetchall()
-        }
+
+    al_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(audit_log)").fetchall()
+    }
+    if al_cols:
         if "organization_id" not in al_cols:
-            conn.execute(
-                "ALTER TABLE audit_log ADD COLUMN organization_id TEXT"
-            )
-        # Migrations for databases created before billing support.
-        org_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(organizations)").fetchall()
-        }
+            conn.execute("ALTER TABLE audit_log ADD COLUMN organization_id TEXT")
+
+    org_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(organizations)").fetchall()
+    }
+    if org_cols:
         if "subscription_plan" not in org_cols:
             conn.execute(
                 "ALTER TABLE organizations ADD COLUMN subscription_plan TEXT NOT NULL DEFAULT 'free'"
@@ -185,9 +238,21 @@ def init_db() -> None:
                 "ALTER TABLE organizations ADD COLUMN api_calls_count INTEGER NOT NULL DEFAULT 0"
             )
         if "stripe_customer_id" not in org_cols:
-            conn.execute(
-                "ALTER TABLE organizations ADD COLUMN stripe_customer_id TEXT"
-            )
+            conn.execute("ALTER TABLE organizations ADD COLUMN stripe_customer_id TEXT")
+
+
+def init_db() -> None:
+    """Create tables and indexes if they don't already exist, then seed the
+    default admin user so the app is usable on first run."""
+    with _connect() as conn:
+        # Migrate missing columns on existing tables BEFORE running executescript().
+        # executescript() issues an implicit COMMIT first (which persists the
+        # ALTER TABLE changes) and then creates indexes — including ones that
+        # reference newly-added columns. Without this pre-migration step, starting
+        # the server against a database created before multi-tenant support was
+        # added raises "no such column: organization_id".
+        _migrate_columns(conn)
+        conn.executescript(_SCHEMA_SQL)
     _seed_default_admin()
 
 

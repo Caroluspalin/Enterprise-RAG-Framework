@@ -204,11 +204,11 @@
 - [x] Rajoitus `POST /api/chat` ja `POST /api/upload` -endpointeissa
 - [x] 9 uutta testiä (7 yksikkö + 2 integraatio), yhteensä 113 testiä vihreällä
 - [x] Rate limit -konfiguraatio per endpoint: admin-endpointeille tiukemmat rajat kuin chat-endpointille
-- [x] Redis-pohjainen rate limiting (valinnainen): kun siirrytään useampaan API-instanssiin, in-memory slowapi ei riitä
+- [ ] Redis-pohjainen rate limiting (valinnainen): kun siirrytään useampaan API-instanssiin, in-memory slowapi ei riitä
 
 **Tietoturvan koventaminen**
 - [x] Login-yrityksen rate limiting: `slowapi`-rajoitus `/api/auth/login`-endpointille (max 10/minuutti per IP)
-- [x] Session-invalidointi: admin voi pakottaa käyttäjän uloskirjautumisen (`force_logout`-kenttä users-tauluun, tarkistetaan jokaisessa pyynnössä)
+- [ ] Session-invalidointi: admin voi pakottaa käyttäjän uloskirjautumisen (`force_logout`-kenttä users-tauluun, tarkistetaan jokaisessa pyynnössä)
 - [x] CORS-konfiguraation validointi: varmista ettei `ALLOWED_ORIGINS` sisällä `*` tuotannossa (lisää startup-varoitus)
 - [x] Helmet-tyyppiset security-headerit: `X-Content-Type-Options`, `X-Frame-Options`, `Strict-Transport-Security` FastAPI-middleware-tasolla
 - [x] Dependency-auditointi: `pip-audit` ja `npm audit` CI-pipelineen — pipeline feilaa kriittisistä haavoittuvuuksista
@@ -220,16 +220,17 @@
 > Tavoite: Tuotteesta tulee moniasiakasympäristö, jossa jokainen organisaatio hallinnoi omia dokumenttejaan, käyttäjiään ja laskutustaan.
 
 **Multi-tenant-arkkitehtuuri**
-- [ ] `organizations`-taulu: `id`, `name`, `slug` (URL-ystävällinen), `plan` (free/pro/enterprise), `created_at`
-- [ ] `users`-tauluun `organization_id` (FK → organizations) — jokainen käyttäjä kuuluu yhteen organisaatioon
-- [ ] Organisaatiokohtaiset vektorikokoelmat: jokainen org saa oman ChromaDB-collectionin (tai Pinecone-namespacen), nimetty `org_{slug}_docs`
-- [ ] Tenant-isolaatio: middleware tarkistaa jokaisessa pyynnössä, että käyttäjä pääsee käsiksi vain oman organisaationsa dataan
-- [ ] API-avaimet sidottu organisaatioon: `api_keys`-tauluun `organization_id`, widget näkee vain oman orgin dokumentit
+- [x] `organizations`-taulu: `id`, `name`, `created_at`
+- [x] `users`-tauluun `organization_id` (FK → organizations) — jokainen käyttäjä kuuluu yhteen organisaatioon
+- [x] Organisaatiokohtaiset vektorikokoelmat: tenant_id-metatietofiltteröinti ChromaDB:ssä (ei erillisiä collectioneja)
+- [x] Tenant-isolaatio: `_resolve_tenant_id()` jokaisessa pyynnössä, retriever scoped per tenant
+- [x] API-avaimet sidottu organisaatioon: `api_keys`-tauluun `organization_id`, widget näkee vain oman orgin dokumentit
 - [ ] Organisaation hallintapaneeli: omistaja voi kutsua käyttäjiä, hallita rooleja, nähdä käyttötilastot
 
 **RBAC (Role-Based Access Control)**
-- [ ] Roolien laajennus: `owner` (organisaation omistaja), `admin` (hallinnoi käyttäjiä ja dokumentteja), `member` (chat + omat sessiot), `viewer` (vain luku)
-- [ ] Roolikohtaiset endpointit: dekoraattori `@require_role("admin")` joka tarkistaa roolin automaattisesti
+- [x] Roolien laajennus: `owner` (organisaation omistaja), `admin` (hallinnoi käyttäjiä ja dokumentteja), `member` (chat + omat sessiot), `viewer` (vain luku)
+- [x] Roolikohtaiset endpointit: `require_role()` FastAPI Depends-dekoraattori joka tarkistaa roolin automaattisesti
+- [x] API-avainten RBAC: `api_keys.role`-sarake, avaimet noudattavat samoja rajoituksia kuin käyttäjät
 - [ ] Frontend-roolinäkyvyys: navigaatio ja UI-elementit piilottavat/näyttävät toiminnot roolin mukaan
 
 **Monipuolinen sisällön syöttö**
@@ -241,13 +242,98 @@
 - [ ] Metadata-filtteröinti haussa: käyttäjä voi rajata haun tiettyyn dokumenttiin, aikaväliin tai tagiin
 
 **Laskutus ja käyttörajoitukset**
-- [ ] Stripe-integraatio: subscription-pohjainen laskutus (free / pro / enterprise -tasot)
-- [ ] Käyttömittarit per organisaatio: kyselyjen määrä, indeksoitujen dokumenttien määrä, tallennustila
-- [ ] Plan-kohtaiset rajoitukset: free = 100 kyselyä/kk + 5 dokumenttia, pro = 5000 kyselyä/kk + 100 dokumenttia, enterprise = rajaton
+- [x] API-kutsujen laskuri per organisaatio: `api_calls_count` organizations-taulussa, `usage_logs`-taulu jokaisesta kutsusta kirjaa timestampin, tokenimäärän ja endpointin
+- [x] API-kutsurajoitukset (billing gate): `src/billing.py` + `check_and_track_usage()`; HTTP 402 kun free (100/kk) tai pro (10 000/kk) kiintiö täynnä, enterprise = rajaton; 26 testiä vihreällä
+- [ ] Dokumentti- ja tallennustilarajat: free = 5 dokumenttia, pro = 100 dokumenttia (kutsulaskuri toteutettu, mutta dokumenttimäärä- ja tallennustilarajoja ei vielä valvota)
+- [ ] Stripe-integraatio: subscription-pohjainen laskutus (free / pro / enterprise -tasot), maksutapahtumien käsittely webhook-kuuntelijassa
 - [ ] Usage dashboard: organisaation omistaja näkee reaaliaikaisen käyttötilanteen ja laskutushistorian
 - [ ] Automaattinen ilmoitus kun käyttöraja lähestyy (80 %) ja kun se ylittyy
 
 **API-autentikaation modernisointi**
-- [ ] JWT-pohjainen autentikaatio: korvaa yksinkertainen widget key lyhytikäisillä JWT-tokeneilla (access + refresh token -pari)
-- [ ] API-versiointi: `/api/v1/chat`, `/api/v1/admin/*` — mahdollistaa rikkovat muutokset ilman vanhojen integraatioiden hajoamista
-- [ ] Webhook-tuki: organisaatio voi rekisteröidä webhook-URL:n joka saa ilmoituksen kun uusi dokumentti indeksoidaan tai kun käyttöraja ylittyy
+- [x] JWT-pohjainen autentikaatio: `src/jwt_auth.py` (HS256, PyJWT), `make_access_token` + `decode_access_token`; `rbac.resolve_role()` hyväksyy JWT Bearer tokenin ennen API-avainta
+- [x] API-versiointi: kaikki reitit siirretty `/api/v1/*` alle FastAPI `APIRouter(prefix="/api/v1")`; kaikki 199 → 223 testiä päivitetty uusille reiteille
+- [x] Webhook-valmius: `POST /api/v1/webhooks/stripe` validoi Stripe-allekirjoituksen HMAC-SHA256:lla (`STRIPE_WEBHOOK_SECRET`); palauttaa HTTP 200; 6 testia
+- [ ] Täydellinen Stripe-integraatio: subscription-eventtien käsittely (upgrade/downgrade/cancel) webhook-kuuntelijassa
+
+---
+
+### Phase 14 — Frontend API Migration (Kriittinen bugikorjaus)
+
+> Tavoite: Frontend puhuu uusille `/api/v1/`-reiteille. Ilman tätä koko UI on rikki tuotannossa.
+
+- [x] `frontend/lib/api.ts` — päivitä `/api/chat`, `/api/documents`, `/api/chat/sessions`, `/api/upload` → `/api/v1/*`
+- [x] `frontend/lib/admin.ts` — päivitä kaikki `${BACKEND_URL}/api/admin/*` ja `/api/auth/register` → `/api/v1/*`
+- [x] `frontend/auth.ts` — päivitä `/api/auth/login` → `/api/v1/auth/login`
+- [x] `frontend/app/api/` BFF-reitit — tarkistettu; käyttävät `admin.ts`-funktioita, ei suoria FastAPI-URL:eja
+- [x] `frontend/next.config.ts` — päivitetty kaikki rewrite-säännöt `/api/v1/`-polkuihin (löytyi tarkistuksessa)
+- [x] `frontend/public/widget.js` — päivitä hardkoodattu `/api/chat` → `/api/v1/chat`
+- [ ] Manuaalinen smoke-testi: login, chat, upload, admin-paneeli toimii deployn jälkeen
+
+---
+
+### Phase 15 — Frontend RBAC-näkyvyys & Session-turvallisuus
+
+> Tavoite: UI:ssa ei näy nappeja joita käyttäjällä ei ole oikeutta painaa. Admin voi pakottaa uloskirjautumisen.
+
+- [ ] `Sidebar.tsx` ja navigaatio — piilota upload-painike viewer- ja member-käyttäjiltä
+- [ ] `AdminPanel.tsx` — suojaa admin-paneelin reitti roolilla (`owner` / `admin` only); muut saavat 403-näkymän
+- [ ] `MessageBubble.tsx` / `ChatInput.tsx` — estä chat-input viewer-roolilla (tai piilota kokonaan)
+- [ ] Rooli välitetty NextAuth-sessioniin — `role`-kenttä `session.user`-objektissa, käytettävissä kaikissa komponenteissa
+- [ ] Session-invalidointi (`force_logout`): lisää `force_logout`-kenttä `users`-tauluun, tarkista se `resolve_role()`-funktiossa, NextAuth-session päättyy pakotetusti
+
+---
+
+### Phase 16 — Stripe-integraatio & Laskutus
+
+> Tavoite: Organisaatiot maksavat oikeasti. Plan-muutokset päivittyvät automaattisesti.
+
+- [ ] Stripe Customer Portal -linkki admin-paneeliin (omistaja hallinnoi tilaustaan itse)
+- [ ] Webhook-eventtien käsittely: `customer.subscription.updated` → päivitä `subscription_plan` kannassa; `customer.subscription.deleted` → pudota `free`-tasolle
+- [ ] `stripe_customer_id` tallennetaan `organizations`-tauluun rekisteröinnin yhteydessä
+- [ ] Dokumenttimääräraja: free = max 5 dokumenttia, pro = max 100; tarkistus `POST /api/v1/upload` -endpointissa (HTTP 402 rajan ylittyessä)
+- [ ] Automaattinen sähköposti-/webhook-ilmoitus kun kiintiö on 80 % täynnä
+- [ ] Usage dashboard -komponentti admin-paneeliin: nykyinen kuukausikäyttö vs. kiintiö, laskutushistoria
+
+---
+
+### Phase 17 — Org & Team Management
+
+> Tavoite: Organisaation omistaja hallinnoi tiimiään itse ilman ylläpitäjää.
+
+- [ ] `POST /api/v1/org/invite` — omistaja lähettää sähköpostikutsun (token-pohjainen, 48 h voimassa)
+- [ ] `POST /api/v1/org/invite/accept` — kutsuttu rekisteröityy ja liittyy organisaatioon automaattisesti
+- [ ] `GET /api/v1/org/members` — listaa organisaation jäsenet rooleineen (owner/admin only)
+- [ ] `PATCH /api/v1/org/members/{id}/role` — muuta jäsenen rooli (owner only)
+- [ ] `DELETE /api/v1/org/members/{id}` — poista jäsen organisaatiosta (owner/admin)
+- [ ] Admin-paneeliin "Team"-tab: jäsenlista, roolien muokkaus, kutsu uusia jäseniä
+
+---
+
+### Phase 18 — Frontend-testit & CI/CD-viimeistely
+
+> Tavoite: Myös frontend testataan automaattisesti. Yksikään rikkinäinen commit ei pääse läpi.
+
+- [ ] Vitest + React Testing Library -konfiguraatio (`vitest.config.ts`, `setup.ts`)
+- [ ] Yksikkötestit: `ChatWindow`, `MessageBubble` (markdown), `AdminPanel` (tab-navigointi), `Toast`
+- [ ] Yksikkötestit `lib/api.ts`: SSE-parsinta, virheenkäsittely, response-validointi
+- [ ] Yksikkötestit `lib/admin.ts`: `unwrap<T>`, header-injektio, virhekäsittely
+- [ ] E2E-testit (Playwright): login-flow, chat → vastaus renderöityy, session-historia, PDF-upload, widget-näkymä
+- [ ] CI-pipeline: frontend-vaihe (`npm ci` → `npm run lint` → `vitest run` → `npm run build`)
+- [ ] CI-pipeline: E2E-vaihe (Playwright headless, ajetaan vain `main`-branchissa)
+- [ ] Branch protection: `main`-branchiin ei voi pushata ilman vihreää CI-statusta
+- [ ] Dependabot-konfiguraatio Python- ja npm-riippuvuuksille
+
+---
+
+### Phase 19 — Tuotannon koventaminen
+
+> Tavoite: Järjestelmä kestää kuorman, toipuu virheistä itse ja on helppo monitoroida.
+
+- [ ] SQLite WAL-moodi (`PRAGMA journal_mode=WAL`) ja `check_same_thread=False` — samanaikaiset kirjoitukset toimivat
+- [ ] `GET /api/v1/health` laajennus: tarkistaa SQLite-, ChromaDB- ja LLM-yhteydet; Render käyttää uptime-monitorointiin
+- [ ] Retry-logiikka `chain.py`:ään: LLM-kutsujen uudelleenyritys (`RateLimitError`, `APIConnectionError`, max 3 kertaa, exponential backoff)
+- [ ] SSE keep-alive: lähetä tyhjä kommenttirivi (`: keepalive\n\n`) 15 s välein — estää Vercel 30 s timeout
+- [ ] SSE-virheenkäsittely frontendissä: jos stream katkeaa, näytä virheilmoitus ja "Yritä uudelleen" -painike
+- [ ] Graceful degradation: jos ChromaDB ei tavoitettavissa, palauta selkeä 503 eikä 500-stacktrace
+- [ ] Redis-pohjainen rate limiting (valinnainen): korvaa in-memory `limiter.py` kun siirrytään multi-instanssi-deployihin
+- [ ] Session-invalidointi (`force_logout`) — ks. Phase 15

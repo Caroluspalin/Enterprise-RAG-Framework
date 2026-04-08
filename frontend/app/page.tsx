@@ -15,7 +15,7 @@ import ChatInput from "@/components/ChatInput";
 
 export default function Home() {
   const { data: authSession } = useSession();
-  const userId = authSession?.user?.email ?? "anonymous";
+  const userId = (authSession?.user as { id?: string })?.id ?? "anonymous";
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);

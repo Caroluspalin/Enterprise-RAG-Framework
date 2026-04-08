@@ -16,16 +16,16 @@ const nextConfig: NextConfig = {
     const backend =
       process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     return [
-      { source: "/api/chat",                     destination: `${backend}/api/chat` },
-      { source: "/api/chat/sessions",             destination: `${backend}/api/chat/sessions` },
-      { source: "/api/chat/sessions/:id",         destination: `${backend}/api/chat/sessions/:id` },
-      { source: "/api/upload",                    destination: `${backend}/api/upload` },
-      { source: "/api/documents",                 destination: `${backend}/api/documents` },
-      { source: "/api/documents/:filename",       destination: `${backend}/api/documents/:filename` },
-      { source: "/api/health",                    destination: `${backend}/api/health` },
-      { source: "/api/auth/login",                 destination: `${backend}/api/auth/login` },
-      { source: "/api/auth/register",              destination: `${backend}/api/auth/register` },
-      { source: "/api/analytics",                  destination: `${backend}/api/analytics` },
+      { source: "/api/v1/chat",                     destination: `${backend}/api/v1/chat` },
+      { source: "/api/v1/chat/sessions",             destination: `${backend}/api/v1/chat/sessions` },
+      { source: "/api/v1/chat/sessions/:id",         destination: `${backend}/api/v1/chat/sessions/:id` },
+      { source: "/api/v1/upload",                    destination: `${backend}/api/v1/upload` },
+      { source: "/api/v1/documents",                 destination: `${backend}/api/v1/documents` },
+      { source: "/api/v1/documents/:filename",       destination: `${backend}/api/v1/documents/:filename` },
+      { source: "/api/v1/health",                    destination: `${backend}/api/v1/health` },
+      { source: "/api/v1/auth/login",                destination: `${backend}/api/v1/auth/login` },
+      { source: "/api/v1/auth/register",             destination: `${backend}/api/v1/auth/register` },
+      { source: "/api/v1/analytics",                 destination: `${backend}/api/v1/analytics` },
     ];
   },
 };

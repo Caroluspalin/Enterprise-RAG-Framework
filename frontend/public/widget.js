@@ -631,7 +631,7 @@
 
     var sessionId = getSessionId();
 
-    fetch(API_URL + "/api/chat", {
+    fetch(API_URL + "/api/v1/chat", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

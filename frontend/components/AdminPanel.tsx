@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { deleteDocument, listDocuments, fetchAnalytics } from "@/lib/api";
 import type { Document, AnalyticsData } from "@/types";
 import UploadPanel from "@/components/UploadPanel";
@@ -71,6 +72,9 @@ function MiniBarChart({ data }: { data: { date: string; count: number }[] }) {
 // ---------------------------------------------------------------------------
 
 export default function AdminPanel() {
+  const { data: session } = useSession();
+  const userId = (session?.user as { id?: string })?.id;
+
   const [tab, setTab] = useState<Tab>("documents");
 
   // -- Documents state --
@@ -91,14 +95,14 @@ export default function AdminPanel() {
   const fetchDocs = useCallback(async () => {
     try {
       setError(null);
-      const docs = await listDocuments();
+      const docs = await listDocuments(userId);
       setDocuments(docs);
     } catch {
       setError("Failed to load documents. Is the backend running?");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     fetchDocs();
@@ -107,7 +111,7 @@ export default function AdminPanel() {
   async function handleDelete(filename: string) {
     setDeleting(filename);
     try {
-      await deleteDocument(filename);
+      await deleteDocument(filename, userId);
       await fetchDocs();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed.");
@@ -123,14 +127,14 @@ export default function AdminPanel() {
     setAnalyticsLoading(true);
     setAnalyticsError(null);
     try {
-      const data = await fetchAnalytics(30);
+      const data = await fetchAnalytics(30, userId);
       setAnalytics(data);
     } catch {
       setAnalyticsError("Failed to load analytics. Is the backend running?");
     } finally {
       setAnalyticsLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (tab === "analytics") loadAnalytics();

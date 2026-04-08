@@ -24,7 +24,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!credentials?.username || !credentials?.password) return null;
 
         try {
-          const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
+          const res = await fetch(`${BACKEND_URL}/api/v1/auth/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -36,8 +36,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           if (!res.ok) return null;
 
           const user = await res.json();
-          // Return the shape NextAuth expects — id, name, and our custom role field.
-          return { id: user.id, name: user.name, role: user.role };
+          // Return the shape NextAuth expects — id must be a string.
+          // The backend returns id as an integer; convert it here so that
+          // Auth.js stores it correctly as token.sub (JWT subject claim).
+          return { id: String(user.id), name: user.name, role: user.role };
         } catch {
           // Backend unreachable — reject the login attempt.
           return null;
@@ -46,14 +48,24 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    // Copy role from the User object into the JWT when the token is first created.
+    // Persist role and id into the JWT on first sign-in.
     jwt({ token, user }) {
-      if (user) token.role = (user as { role: string }).role;
+      if (user) {
+        token.role = (user as { role: string }).role;
+        // Explicitly mirror user.id into token.sub (Auth.js may already do
+        // this, but the custom callback overrides the default, so be explicit).
+        token.sub = user.id;
+      }
       return token;
     },
-    // Expose role on session.user so both server and client components can read it.
+    // Expose role and id on session.user for both server and client components.
     session({ session, token }) {
-      (session.user as { role?: string }).role = token.role as string;
+      const u = session.user as { role?: string; id?: string };
+      u.role = token.role as string;
+      // token.sub is the user's DB id (set above from user.id).
+      // The custom session callback replaces Auth.js defaults, so we must
+      // copy sub → id explicitly; otherwise session.user.id stays undefined.
+      u.id = token.sub;
       return session;
     },
   },

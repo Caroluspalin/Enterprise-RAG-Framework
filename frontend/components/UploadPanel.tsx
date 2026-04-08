@@ -1,6 +1,7 @@
 "use client";
 
 import { DragEvent, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { uploadPDF } from "@/lib/api";
 
 interface UploadPanelProps {
@@ -8,6 +9,7 @@ interface UploadPanelProps {
 }
 
 export default function UploadPanel({ onUploadComplete }: UploadPanelProps) {
+  const { data: session } = useSession();
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -24,7 +26,8 @@ export default function UploadPanel({ onUploadComplete }: UploadPanelProps) {
     setMessage(`Uploading ${file.name}…`);
 
     try {
-      const res = await uploadPDF(file);
+      const userId = session?.user?.id ?? undefined;
+      const res = await uploadPDF(file, userId);
       setStatus("success");
       setMessage(res.message);
       onUploadComplete();
