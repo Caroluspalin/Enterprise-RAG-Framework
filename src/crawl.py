@@ -208,7 +208,8 @@ def index_crawled_pages(
     for page in pages:
         chunks = splitter.split_text(page["text"])
         for i, chunk_text in enumerate(chunks):
-            chunk_id = f"{crawl_record_id}_{page['content_hash'][:16]}_{i}"
+            url_hash = hashlib.md5(page["url"].encode()).hexdigest()[:8]
+            chunk_id = f"{crawl_record_id}_{url_hash}_{page['content_hash'][:8]}_{i}"
             all_ids.append(chunk_id)
             all_documents.append(chunk_text)
             all_metadatas.append({
