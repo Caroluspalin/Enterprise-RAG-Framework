@@ -123,6 +123,22 @@ CREATE TABLE IF NOT EXISTS usage_logs (
 
 CREATE INDEX IF NOT EXISTS idx_usage_logs_org       ON usage_logs(organization_id);
 CREATE INDEX IF NOT EXISTS idx_usage_logs_timestamp ON usage_logs(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS crawled_urls (
+    id              TEXT PRIMARY KEY,
+    url             TEXT NOT NULL,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
+    status          TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'crawling', 'done', 'error')),
+    page_count      INTEGER NOT NULL DEFAULT 0,
+    content_hash    TEXT,
+    error_message   TEXT,
+    last_crawled_at TEXT,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_crawled_urls_tenant ON crawled_urls(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_crawled_urls_url    ON crawled_urls(url, tenant_id);
 """
 
 
@@ -748,5 +764,107 @@ def get_analytics(days: int = 30) -> dict:
         "recent_questions": recent_questions,
         "popular_questions": popular_questions,
     }
+
+
+# ---------------------------------------------------------------------------
+# Crawled URLs
+# ---------------------------------------------------------------------------
+
+def create_crawled_url(url: str, tenant_id: str = "default") -> dict:
+    """Insert a new crawled URL record with status 'pending'."""
+    row_id = uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO crawled_urls (id, url, tenant_id, status, page_count, created_at) "
+            "VALUES (?, ?, ?, 'pending', 0, ?)",
+            (row_id, url, tenant_id, now),
+        )
+    return {
+        "id": row_id, "url": url, "tenant_id": tenant_id,
+        "status": "pending", "page_count": 0, "content_hash": None,
+        "error_message": None, "last_crawled_at": None, "created_at": now,
+    }
+
+
+def get_crawled_url(row_id: str) -> dict | None:
+    """Return a single crawled URL record or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, url, tenant_id, status, page_count, content_hash, "
+            "error_message, last_crawled_at, created_at "
+            "FROM crawled_urls WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_crawled_url_by_url(url: str, tenant_id: str) -> dict | None:
+    """Look up an existing crawl record by URL within a tenant."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, url, tenant_id, status, page_count, content_hash, "
+            "error_message, last_crawled_at, created_at "
+            "FROM crawled_urls WHERE url = ? AND tenant_id = ?",
+            (url, tenant_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_crawled_urls(tenant_id: str) -> list[dict]:
+    """Return all crawled URL records for a tenant, newest first."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, url, tenant_id, status, page_count, content_hash, "
+            "error_message, last_crawled_at, created_at "
+            "FROM crawled_urls WHERE tenant_id = ? ORDER BY created_at DESC",
+            (tenant_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_crawled_url(
+    row_id: str,
+    *,
+    status: str | None = None,
+    page_count: int | None = None,
+    content_hash: str | None = None,
+    error_message: str | None = None,
+    last_crawled_at: str | None = None,
+) -> bool:
+    """Update selected fields on a crawled URL record. Returns True if found."""
+    fields: list[str] = []
+    values: list = []
+    if status is not None:
+        fields.append("status = ?")
+        values.append(status)
+    if page_count is not None:
+        fields.append("page_count = ?")
+        values.append(page_count)
+    if content_hash is not None:
+        fields.append("content_hash = ?")
+        values.append(content_hash)
+    if error_message is not None:
+        fields.append("error_message = ?")
+        values.append(error_message)
+    if last_crawled_at is not None:
+        fields.append("last_crawled_at = ?")
+        values.append(last_crawled_at)
+    if not fields:
+        return False
+    values.append(row_id)
+    with _connect() as conn:
+        cursor = conn.execute(
+            f"UPDATE crawled_urls SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+    return cursor.rowcount > 0
+
+
+def delete_crawled_url(row_id: str) -> bool:
+    """Delete a crawled URL record. Returns True if found and deleted."""
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM crawled_urls WHERE id = ?", (row_id,))
+    return cursor.rowcount > 0
 
 

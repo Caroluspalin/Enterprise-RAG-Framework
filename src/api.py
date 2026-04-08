@@ -58,12 +58,15 @@ from db import (
     auto_title_from_question,
     change_password,
     create_api_key,
+    create_crawled_url,
     create_session,
     create_user,
     delete_api_key,
+    delete_crawled_url,
     delete_session,
     delete_user,
     get_analytics,
+    get_crawled_url,
     get_messages,
     get_session,
     get_sessions,
@@ -71,6 +74,7 @@ from db import (
     get_user_by_username,
     init_db,
     list_api_keys,
+    list_crawled_urls,
     list_users,
     revoke_api_key,
     update_session_title,
@@ -714,6 +718,162 @@ async def delete_document(request: Request, filename: str, user_id: str = "anony
     return {
         "message": f"'{filename}' deleted successfully.",
         "chunks_removed": chunks_deleted,
+    }
+
+
+# ---------------------------------------------------------------------------
+# URL crawling endpoints
+# ---------------------------------------------------------------------------
+
+class CrawlRequest(BaseModel):
+    url: str = Field(..., description="The starting URL to crawl.")
+    max_depth: int = Field(default=3, ge=0, le=5, description="Maximum link depth from the start URL.")
+    max_pages: int = Field(default=50, ge=1, le=200, description="Maximum number of pages to crawl.")
+    user_id: str = "anonymous"
+
+
+@v1_router.post(
+    "/crawl",
+    dependencies=[Depends(require_role(["owner", "admin"]))],
+)
+async def crawl_url(request: Request, req: CrawlRequest):
+    """Crawl a website, extract text, and index it into the vector store.
+
+    The crawl runs synchronously in a thread pool worker.  The response
+    is returned only after the crawl completes (or fails).  For very large
+    sites, the caller should set max_pages to a reasonable limit.
+    """
+    # Resolve tenant from user or API key.
+    api_key_info: dict | None = None
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, req.user_id, api_key_info,
+    )
+
+    # Billing gate.
+    try:
+        await asyncio.to_thread(
+            check_and_track_usage, tenant_id, "/api/v1/crawl",
+        )
+    except UsageLimitExceeded as exc:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Monthly API call limit reached for your plan ('{exc.plan}'). "
+            f"Limit: {exc.limit}, used: {exc.current}. Please upgrade.",
+        )
+
+    # Rate limit crawls by IP — crawling is expensive.
+    crawl_key = request.client.host if request.client else "unknown"
+    _apply_rate_limit(f"crawl:{crawl_key}", "FREE_USER")
+
+    # Create a DB record to track the crawl status.
+    record = await asyncio.to_thread(create_crawled_url, req.url, tenant_id)
+
+    log.info(
+        "Crawl started | url=%s depth=%d max_pages=%d tenant=%s",
+        req.url, req.max_depth, req.max_pages, tenant_id,
+    )
+
+    from crawl import execute_crawl
+
+    try:
+        result = await asyncio.to_thread(
+            execute_crawl,
+            record["id"], req.url, tenant_id,
+            max_depth=req.max_depth, max_pages=req.max_pages,
+        )
+    except Exception as exc:
+        log.exception("Crawl failed for %s", req.url)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Crawl failed: {exc}",
+        ) from exc
+
+    ip = request.client.host if request.client else None
+    org_id = tenant_id if tenant_id != DEFAULT_TENANT else None
+    await asyncio.to_thread(
+        log_event, None, "URL_CRAWLED", ip,
+        {
+            "url": req.url, "tenant_id": tenant_id,
+            "pages_crawled": result["pages_crawled"],
+            "chunks_indexed": result["chunks_indexed"],
+        },
+        organization_id=org_id,
+    )
+
+    return {
+        "message": f"Crawl complete for '{req.url}'.",
+        "crawl_id": record["id"],
+        **result,
+    }
+
+
+@v1_router.get(
+    "/crawled-urls",
+    dependencies=[Depends(require_role(["owner", "admin", "member", "viewer"]))],
+)
+async def list_crawled(request: Request, user_id: str = "anonymous"):
+    """Return all crawled URL records for the caller's tenant."""
+    api_key_info: dict | None = None
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, user_id, api_key_info,
+    )
+    records = await asyncio.to_thread(list_crawled_urls, tenant_id)
+    return {"crawled_urls": records}
+
+
+@v1_router.delete(
+    "/crawled-urls/{crawl_id}",
+    dependencies=[Depends(require_role(["owner", "admin"]))],
+)
+async def delete_crawled(request: Request, crawl_id: str, user_id: str = "anonymous"):
+    """Delete a crawled URL record and its indexed chunks from the vector store."""
+    api_key_info: dict | None = None
+    client_key = request.headers.get("X-Widget-Key", "")
+    if client_key:
+        api_key_info = await asyncio.to_thread(verify_api_key, client_key)
+    tenant_id = await asyncio.to_thread(
+        _resolve_tenant_id, user_id, api_key_info,
+    )
+
+    record = await asyncio.to_thread(get_crawled_url, crawl_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Crawled URL record not found.")
+
+    # Tenant isolation: only allow deleting records that belong to the caller's org.
+    if record["tenant_id"] != tenant_id:
+        raise HTTPException(status_code=404, detail="Crawled URL record not found.")
+
+    # Remove indexed chunks from the vector store.
+    def _delete_chunks():
+        try:
+            store = get_vector_store()
+            return store.delete_by_metadata(
+                "crawl_record_id", crawl_id, tenant_id=tenant_id,
+            )
+        except Exception:
+            return 0
+
+    chunks_removed = await asyncio.to_thread(_delete_chunks)
+    await asyncio.to_thread(delete_crawled_url, crawl_id)
+
+    ip = request.client.host if request.client else None
+    org_id = tenant_id if tenant_id != DEFAULT_TENANT else None
+    await asyncio.to_thread(
+        log_event, None, "URL_CRAWL_DELETED", ip,
+        {"crawl_id": crawl_id, "url": record["url"], "chunks_removed": chunks_removed},
+        organization_id=org_id,
+    )
+
+    log.info("Crawl deleted | id=%s url=%s chunks=%d", crawl_id, record["url"], chunks_removed)
+    return {
+        "message": f"Crawled URL '{record['url']}' deleted.",
+        "chunks_removed": chunks_removed,
     }
 
 
