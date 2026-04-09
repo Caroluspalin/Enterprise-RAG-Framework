@@ -281,8 +281,19 @@ def execute_crawl(
     now = datetime.now(timezone.utc).isoformat
 
     # Look up previous content hash for deduplication.
+    # Only use the cached hash if indexed chunks actually exist in the
+    # vector store — ephemeral storage (e.g. Render free tier) may have
+    # lost the vectors while the DB record survived.
+    previous_hash = None
     existing = get_crawled_url_by_url(url, tenant_id)
-    previous_hash = existing["content_hash"] if existing else None
+    if existing and existing.get("content_hash"):
+        try:
+            store = get_vector_store()
+            chunk_count = len(store.get_all_metadata(tenant_id=tenant_id))
+            if chunk_count > 0:
+                previous_hash = existing["content_hash"]
+        except Exception:
+            pass
 
     # Mark as crawling.
     update_crawled_url(crawl_record_id, status="crawling")
